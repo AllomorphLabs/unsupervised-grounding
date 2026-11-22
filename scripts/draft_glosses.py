@@ -88,7 +88,8 @@ def main() -> None:
         "# Do not edit by hand: change concepts.yaml and rerun the script.\n"
         "# Each invented word must be at least 3 edits from every gloss for its meaning.\n\n"
     )
-    GLOSSES.write_text(header + yaml.safe_dump(out, sort_keys=True, width=100), encoding="utf-8")
+    text = header + yaml.safe_dump(out, sort_keys=True, width=100)
+    GLOSSES.write_text(text, encoding="utf-8", newline="\n")
     print(f"wrote {len(out)} concepts to {GLOSSES.relative_to(ROOT)}")
 
 

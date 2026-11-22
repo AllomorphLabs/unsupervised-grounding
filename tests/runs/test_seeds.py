@@ -28,3 +28,20 @@ def test_every_stream_has_a_seed():
 def test_unknown_stream_rejected():
     with pytest.raises(ValueError):
         stream_rng(0, "video")
+
+
+def test_parts_are_reproducible_and_distinct():
+    from grounding.runs.seeds import part_rngs
+
+    def draws(root, stream):
+        return {
+            k: g.integers(0, 2**32, 8).tolist()
+            for k, g in part_rngs(root, stream, ("a", "b")).items()
+        }
+
+    assert draws(3, "lang") == draws(3, "lang")
+    assert draws(3, "lang")["a"] != draws(3, "lang")["b"]
+    assert draws(3, "lang")["a"] != draws(3, "obs")["a"]
+    # Appending a part leaves earlier parts unchanged.
+    longer = part_rngs(3, "lang", ("a", "b", "c"))["a"].integers(0, 2**32, 8).tolist()
+    assert longer == draws(3, "lang")["a"]

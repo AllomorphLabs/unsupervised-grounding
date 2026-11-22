@@ -22,3 +22,20 @@ def stream_rng(root: int, stream: str) -> np.random.Generator:
     if stream not in STREAMS:
         raise ValueError(f"unknown stream {stream!r}; expected one of {STREAMS}")
     return np.random.default_rng(stream_seeds(root)[stream])
+
+
+def part_rngs(root: int, stream: str, parts: tuple[str, ...]) -> dict[str, np.random.Generator]:
+    """Independent generators for named parts of one stream (vocabulary, simulation, ...).
+
+    A part's generator depends only on its position in ``parts``, so keep each
+    stream's tuple fixed and only ever append to it.
+    """
+    if stream not in STREAMS:
+        raise ValueError(f"unknown stream {stream!r}; expected one of {STREAMS}")
+    seq = stream_seeds(root)[stream]
+    return {
+        name: np.random.default_rng(
+            np.random.SeedSequence(seq.entropy, spawn_key=(*seq.spawn_key, i))
+        )
+        for i, name in enumerate(parts)
+    }

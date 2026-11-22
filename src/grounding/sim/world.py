@@ -22,7 +22,7 @@ Rules:
 
 from dataclasses import dataclass
 from fractions import Fraction
-from functools import cached_property
+from functools import cached_property, lru_cache
 from itertools import product
 from typing import NamedTuple
 
@@ -192,14 +192,40 @@ def explore(world: World) -> dict[State, Kernel]:
     return kernels
 
 
+@lru_cache(maxsize=64)
+def _starts(world: World) -> tuple[State, ...]:
+    return tuple(initial_states(world))
+
+
+@lru_cache(maxsize=500_000)
+def _outcomes(world: World, state: State) -> tuple[tuple[tuple[Event, State], ...], np.ndarray]:
+    # Cached, because building corpora steps through the same states many times.
+    items = list(transitions(world, state).items())
+    probs = np.array([float(p) for _, p in items])
+    return tuple(o for o, _ in items), probs / probs.sum()
+
+
 def sample_initial(world: World, rng: np.random.Generator) -> State:
-    starts = initial_states(world)
+    starts = _starts(world)
     return starts[rng.integers(len(starts))]
 
 
 def step(world: World, state: State, rng: np.random.Generator) -> tuple[Event, State]:
     """Sample one (event, next state) outcome from ``state``."""
-    outcomes = list(transitions(world, state).items())
-    probs = np.array([float(p) for _, p in outcomes])
-    (e, nxt), _ = outcomes[rng.choice(len(outcomes), p=probs / probs.sum())]
-    return e, nxt
+    outcomes, probs = _outcomes(world, state)
+    return outcomes[rng.choice(len(outcomes), p=probs)]
+
+
+def state_to_array(state: State) -> np.ndarray:
+    """A state as integers: agent places, agent hunger, then (kind, index) per object."""
+    return np.array(
+        [*state.pos, *map(int, state.hungry), *(x for loc in state.loc for x in loc)],
+        dtype=np.int16,
+    )
+
+
+def state_from_array(world: World, a: np.ndarray) -> State:
+    n, m = len(world.agents), len(world.objects)
+    vals = [int(x) for x in a]
+    loc = tuple((vals[2 * n + 2 * i], vals[2 * n + 2 * i + 1]) for i in range(m))
+    return State(tuple(vals[:n]), tuple(bool(x) for x in vals[n : 2 * n]), loc)

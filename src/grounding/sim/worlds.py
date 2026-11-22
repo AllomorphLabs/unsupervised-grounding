@@ -51,3 +51,13 @@ def tiny(habit: Fraction | int | str | None = None) -> World:
         feeding=frozenset({RIVER}),
         habits=() if habit is None else (Habit(agent=0, place=RIVER, weight=Fraction(habit)),),
     )
+
+
+WORLDS = {"pilot": pilot, "tiny": tiny}
+
+
+def make_world(name: str, **args) -> World:
+    """Build a named world, e.g. ``make_world("pilot", habit="5/4")``."""
+    if name not in WORLDS:
+        raise ValueError(f"unknown world {name!r}; expected one of {sorted(WORLDS)}")
+    return WORLDS[name](**args)
