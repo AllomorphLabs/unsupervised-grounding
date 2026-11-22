@@ -8,7 +8,8 @@ independent but the whole pair can be regenerated from the root alone.
 import numpy as np
 
 # Order matters: a stream's index fixes its child seed. Only ever append.
-STREAMS = ("lang", "obs")
+# "align" seeds alignment restarts; it is not a data stream.
+STREAMS = ("lang", "obs", "align")
 
 
 def stream_seeds(root: int) -> dict[str, np.random.SeedSequence]:

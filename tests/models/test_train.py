@@ -6,7 +6,14 @@ import torch
 
 from grounding.data.config import CorpusConfig
 from grounding.data.corpus import generate_pair
-from grounding.models.train import ModelsConfig, TrainConfig, load_model, train, training_seed
+from grounding.models.train import (
+    Batches,
+    ModelsConfig,
+    TrainConfig,
+    load_model,
+    train,
+    training_seed,
+)
 from grounding.models.transformer import ModelConfig
 from grounding.runs.record import read_record
 
@@ -34,10 +41,30 @@ def metrics(pair, stream):
     return [json.loads(x) for x in lines]
 
 
-def test_held_out_loss_falls(pair, trained):
+def test_validation_loss_falls(pair, trained):
     stream, summary = trained
     rows = metrics(pair, stream)
-    assert summary["held_out_loss"] < 0.7 * rows[0]["held_out_loss"]
+    assert summary["validation_loss"] < 0.7 * rows[0]["validation_loss"]
+
+
+def test_the_best_step_is_the_one_kept(pair, trained):
+    stream, summary = trained
+    rows = metrics(pair, stream)
+    best = min(rows, key=lambda r: r["validation_loss"])
+    assert summary["best_step"] == best["step"]
+    assert summary["validation_loss"] == pytest.approx(best["validation_loss"])
+
+
+def test_held_out_episodes_never_reach_training_logs(pair, trained):
+    stream, _ = trained
+    assert all("held_out_loss" not in row for row in metrics(pair, stream))
+
+
+def test_train_validation_and_held_out_are_disjoint(pair):
+    data = Batches("lang", pair / "data", torch.device("cpu"), 0.2, seed=1)
+    sets = [set(data.train), set(data.validation), set(data.held_out)]
+    assert all(sets) and sum(map(len, sets)) == len(set().union(*sets))
+    assert len(data.validation) == round(0.2 * (len(data.train) + len(data.validation)))
 
 
 def test_outputs_and_record(pair, trained):

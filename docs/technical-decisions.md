@@ -19,6 +19,7 @@ Status is **Decided** (code follows it), **Proposed** (current plan, not yet con
 | 11 | Nothing about entity order can bias the swap rate | Decided |
 | 12 | Corpus pairs: episode lengths, the actor mark and hidden ground truth | Decided |
 | 13 | Pilot models: one small causal transformer for both streams | Decided |
+| 14 | Pilot alignment: vec2vec-style, on world states, with strong geometry preservation | Decided |
 
 ## 1. Python 3.15, PyTorch, uv
 
@@ -139,7 +140,7 @@ A test checks this works: on the tiny world, an aligner that ties perfectly betw
 - **Observation frames** are the start state, then the state after each step. Each frame also marks the agent that acted on that step, so every event, including a wait, is visible in both streams, as decision 9 asks.
 - **Held-out episodes:** 10% of each stream's episodes, chosen at random, are kept back for scoring.
 - **Layout:** the public files (`lang.npz`, `lang_tokens.json`, `obs.npz`) are all training code may read. Sentence labels, true states, the vocabulary and the slot shuffle are under `hidden/`. Each pair also gets a `run.json` run record.
-- **Pilot size:** 5,000 episodes per stream (about 1.5 million tokens and 200,000 frames), a starting point to be revised by the pilot's power analysis. A pair takes about 15 seconds to build.
+- **Pilot size:** 50,000 episodes per stream (about 15 million tokens and 2 million frames), a starting point to be revised by the pilot's power analysis. With 5,000 episodes, the first trial pair's models memorised their training episodes (see decision 13).
 
 ## 13. Pilot models
 
@@ -149,5 +150,19 @@ A test checks this works: on the tiny world, an aligner that ties perfectly betw
 - **Language model:** predicts the next token.
 - **Frame model:** predicts each of the next frame's values as an independent yes/no. It isn't told which values form a block, so the structure of the world isn't handed to it.
 - **Budget:** 20,000 steps or 10 minutes per model, whichever comes first. On the workstation GPU that is about 10 minutes for the language model and 5 for the frame model.
+- **Best model kept:** 10% of the training episodes are set aside for validation, and the model kept is the one from the step with the lowest validation loss. In the first trial pair, held-out loss rose while training loss kept falling, which means memorisation. The held-out episodes are reserved for scoring: they play no part in training or in choosing the model, and their loss is reported once, at the end.
 - **Seeds:** each model's training seed is drawn from its own part of its stream's seed, so every pair and stream trains independently. Runs are exactly reproducible on the CPU; on the GPU they may differ in the last digits.
 - **PyTorch builds:** the CUDA 13.4 build on Windows (the workstation's RTX 3070 Ti, 8 GB) and the CPU build on Linux (CI). To revisit when training moves to a Linux GPU machine.
+
+## 14. Pilot alignment
+
+`python -m grounding.align.run runs/pilot/pair-000 --kind model` aligns a pair, and `python -m grounding.analysis.score runs/pilot/pair-000 --kind model` scores it, with settings from `configs/pilot-align.yaml` (`align/`, `analysis/score.py`). `--kind raw` runs the co-occurrence baseline.
+
+- **What is aligned:** each model's picture of the world at each moment. That is the language model's hidden state at every sentence end, and the frame model's hidden state at every frame, from the last layer. Only public structure is used to choose these points. Opening sentences and recaps have no exact counterpart among the frames.
+- **Method:** vec2vec-style (after Jha et al., 2025). Two maps, language to observations and back, are trained with adversarial losses, round-trip consistency and preservation of each cloud's internal geometry. No labels and no pairs are used. 20 restarts are run per pair; the one kept has the lowest maximum mean discrepancy (MMD) between mapped and real points, a score that needs no labels. Every restart is saved and scored.
+- **Strong geometry preservation.** Flexible maps can reshape any cloud of points into any other, so matching distributions alone doesn't identify the right mapping. On a toy problem (recovering a hidden rotation between clusters of unequal size), at geometry weight 1 the restart with the lowest MMD was wrong. At weight 100 it was right. A test checks that the lowest-MMD restart recovers the toy mapping.
+- **Co-occurrence baseline:** the same method on raw statistics, with no neural model. For language, the token counts of the current sentence and the share of each token so far in the episode; for observations, the raw frame. So any gain over the baseline comes from the learned models, not the method.
+- **Sampling:** alignment uses 5,000 training episodes per side, and scoring 1,000 held-out episodes per side. Both are drawn from the pair's alignment seed and shared by the model alignment and the baseline.
+- **Scoring:** each held-out sentence end is mapped across, and the true state of its nearest held-out frame is the prediction. Reported: exact accuracy, accuracy up to symmetry, agreement with each symmetry's relabelling of the truth (which shows whether a pair swapped the agents), accuracy per part of the state, and all of these again for shuffled predictions as chance.
+- **Firewall:** scoring refuses any condition not registered in `runs/conditions.py`, and any main condition until `prereg/LOCK` exists.
+- **Entity order (decision 11, point 4):** each restart draws its own initialisation and its own random order of points. The maps don't choose between entities by index, so no tie can fall to whichever entity comes first.

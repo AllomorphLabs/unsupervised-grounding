@@ -5,9 +5,15 @@
 Reads the pair's public data only, trains for ``steps`` steps or until the time
 budget runs out, and writes to ``<pair>/models/<stream>/``:
 
-    model.pt        weights and the configs needed to rebuild the model
-    metrics.jsonl   training and held-out loss over time
+    model.pt        weights of the best model, and the configs needed to rebuild it
+    metrics.jsonl   training and validation loss over time
+    summary.json    the best step, its validation loss, and the final held-out loss
     run.json        configs, training seed, git commit, package versions
+
+A share of the training episodes is set aside for validation, and the model
+kept is the one with the lowest validation loss. The held-out episodes are
+reserved for scoring: they play no part in training or in choosing the model,
+and their loss is reported once, at the end, for information only.
 
 The training seed comes from the pair's root seed, from a part of the stream's
 seed reserved for training, so every pair has an independent training seed.
@@ -41,6 +47,7 @@ class TrainConfig:
     weight_decay: float = 0.1
     eval_every: int = 500
     max_minutes: float = 10.0
+    validation: float = 0.1  # share of training episodes used to choose the best step
 
 
 @dataclass(frozen=True)
@@ -68,7 +75,9 @@ def _episodes(starts: np.ndarray, total: int) -> list[tuple[int, int]]:
 class Batches:
     """Padded batches of whole episodes from one stream."""
 
-    def __init__(self, stream: str, data_dir: Path, device: torch.device):
+    def __init__(
+        self, stream: str, data_dir: Path, device: torch.device, validation: float, seed: int
+    ):
         self.stream, self.device = stream, device
         if stream == "lang":
             s = load_lang(data_dir)
@@ -81,8 +90,13 @@ class Batches:
         else:
             raise ValueError(f"unknown stream {stream!r}")
         spans = _episodes(s.episode_start, len(self.data))
-        self.train = [sp for sp, h in zip(spans, s.held_out, strict=True) if not h]
+        train = [sp for sp, h in zip(spans, s.held_out, strict=True) if not h]
         self.held_out = [sp for sp, h in zip(spans, s.held_out, strict=True) if h]
+        # The validation split has its own random stream, separate from batch sampling.
+        order = np.random.default_rng([seed, 1]).permutation(len(train))
+        n_val = round(validation * len(train))
+        self.validation = [train[i] for i in sorted(order[:n_val])]
+        self.train = [train[i] for i in sorted(order[n_val:])]
         self.longest = max(b - a for a, b in spans)
 
     def make_model(self, cfg: ModelConfig) -> torch.nn.Module:
@@ -113,12 +127,12 @@ def _lr(step: int, cfg: TrainConfig) -> float:
 
 
 @torch.no_grad()
-def held_out_loss(model, data: Batches, batch_size: int) -> float:
-    """Mean loss per held-out episode batch, weighted by batch size."""
+def mean_loss(model, data: Batches, spans_all: list[tuple[int, int]], batch_size: int) -> float:
+    """Mean loss over ``spans_all``, batch by batch, weighted by batch size."""
     model.eval()
     total, n = 0.0, 0
-    for i in range(0, len(data.held_out), batch_size):
-        spans = data.held_out[i : i + batch_size]
+    for i in range(0, len(spans_all), batch_size):
+        spans = spans_all[i : i + batch_size]
         total += model.loss(*data.batch(spans)).item() * len(spans)
         n += len(spans)
     model.train()
@@ -141,7 +155,7 @@ def train(
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
 
-    data = Batches(stream, pair / "data", dev)
+    data = Batches(stream, pair / "data", dev, cfg.train.validation, seed)
     model_cfg = ModelConfig(**{**asdict(cfg.model), "context": data.longest})
     model = data.make_model(model_cfg).to(dev)
     opt = torch.optim.AdamW(
@@ -153,6 +167,7 @@ def train(
     metrics_file = (out / "metrics.jsonl").open("w", encoding="utf-8")
     stopped_by_time = False
     step = 0
+    best = {"step": -1, "validation_loss": math.inf, "state": None}
     for step in range(tc.steps):
         if (time.monotonic() - started) / 60 > tc.max_minutes:
             stopped_by_time = True
@@ -166,10 +181,14 @@ def train(
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         opt.step()
         if step % tc.eval_every == 0 or step == tc.steps - 1:
+            val = mean_loss(model, data, data.validation, tc.batch_size)
+            if val < best["validation_loss"]:
+                state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+                best = {"step": step, "validation_loss": val, "state": state}
             row = {
                 "step": step,
                 "train_loss": loss.item(),
-                "held_out_loss": held_out_loss(model, data, tc.batch_size),
+                "validation_loss": val,
                 "minutes": (time.monotonic() - started) / 60,
             }
             metrics_file.write(json.dumps(row) + "\n")
@@ -177,12 +196,16 @@ def train(
     else:
         step = tc.steps
     metrics_file.close()
+    if best["state"] is not None:
+        model.load_state_dict(best["state"])
 
     summary = {
         "stream": stream,
         "steps": step,
         "stopped_by_time": stopped_by_time,
-        "held_out_loss": held_out_loss(model, data, tc.batch_size),
+        "best_step": best["step"],
+        "validation_loss": best["validation_loss"],
+        "held_out_loss": mean_loss(model, data, data.held_out, tc.batch_size),
         "parameters": count_parameters(model),
         "minutes": (time.monotonic() - started) / 60,
         "device": str(dev),

@@ -1,0 +1,16 @@
+# Alignment settings for the pilot (technical decision 14). May be tuned on the pilot world
+# (decision 4); frozen on the cipher control and calibration world before the main conditions.
+layer: -1
+episodes: 5000  # training episodes sampled per side for alignment
+score_episodes: 1000  # held-out episodes sampled per side for scoring
+vec2vec:
+  hidden: 256
+  steps: 3000
+  batch: 256
+  lr: 0.001
+  disc_lr: 0.001
+  adv: 1.0
+  cycle: 10.0
+  geometry: 100.0  # strong: without it, selection by MMD picks wrong restarts (decision 14)
+  restarts: 20
+  score_sample: 2000

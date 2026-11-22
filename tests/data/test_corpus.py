@@ -90,13 +90,26 @@ TOUCHES_HIDDEN = re.compile(
 
 
 def test_only_analysis_and_corpus_building_touch_hidden_files():
-    allowed = {SRC / "analysis" / "labels.py", SRC / "data" / "corpus.py"}
+    # The analysis package scores against the truth; corpus building writes it. Nothing
+    # else, including alignment and training, may reach it.
+    def allowed(p: Path) -> bool:
+        return SRC / "analysis" in p.parents or p == SRC / "data" / "corpus.py"
+
     offenders = [
         p.relative_to(SRC)
         for p in SRC.rglob("*.py")
-        if p not in allowed and TOUCHES_HIDDEN.search(p.read_text("utf-8"))
+        if not allowed(p) and TOUCHES_HIDDEN.search(p.read_text("utf-8"))
     ]
     assert offenders == []
+
+
+def test_alignment_and_training_never_import_analysis():
+    for folder in ("align", "models", "data"):
+        for p in (SRC / folder).rglob("*.py"):
+            imports = re.search(
+                r"^\s*(from|import)\s+grounding\.analysis", p.read_text("utf-8"), re.MULTILINE
+            )
+            assert not imports, p.relative_to(SRC)
 
 
 def test_the_hidden_file_check_catches_real_uses():
