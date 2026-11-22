@@ -14,7 +14,16 @@ There's an interactive demo of the idea on the website: <https://allomorphlabs.c
 
 ## Status
 
-Proposal stage. Code will be added here as the pilot begins.
+Starting the pilot. The package skeleton, run records and tests are in place; the simulated world comes next.
+
+## Running the code
+
+You need [uv](https://docs.astral.sh/uv/), which installs the right Python version (3.15) and every dependency for you:
+
+```
+uv sync
+uv run pytest
+```
 
 ## Documents
 
