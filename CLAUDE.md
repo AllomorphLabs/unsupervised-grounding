@@ -67,11 +67,13 @@ The project runs in five gated phases. Don't start a phase until the previous ph
 
 The compute budget is roughly 2,000–3,000 GPU-hours on a single GPU. Keep tests and examples to tiny configurations that run in seconds, and never launch long training runs without asking.
 
-## Assumed so far (confirm or edit)
+## Technical decisions
 
-- **Stack:** Python and PyTorch, since the proposal builds on Othello-GPT, MUSE and vec2vec, which are PyTorch codebases. Not yet decided.
-- **Suggested layout:** `sim/` (world and symmetry computation), `render/language/`, `render/grid/`, `models/`, `align/`, `analysis/`, `prereg/`, `configs/`. This is a starting suggestion. So far the repo holds only `README.md`, `CLAUDE.md` and `docs/proposal.md`.
-- **Reproducibility:** every run records its config, random seeds and git commit, and can be rerun from those alone.
+Engineering choices (stack, tokenisation, word lists, package layout, how rules are enforced) are recorded in [`docs/technical-decisions.md`](docs/technical-decisions.md), each marked Decided, Proposed or Open. Read it before writing code, and follow Decided entries.
+
+Keep it up to date and concise. When a decision is made, changed or reopened in conversation, edit its entry and the summary table in the same change. Don't add dates or a history section; git records those. Don't treat a Proposed or Open entry as settled; ask first.
+
+In short, so far: Python 3.15, PyTorch and uv; one package, `grounding`; morpheme-level tokens; `wordfreq` for the common-English list; glosses drafted with WordNet into a committed file; tuning on the pilot world is allowed. Every run records its config, random seeds and git commit, and can be rerun from those alone.
 
 ## Writing and naming
 
@@ -84,4 +86,5 @@ The compute budget is roughly 2,000–3,000 GPU-hours on a single GPU. Keep test
 
 - `README.md` is the public front page. Keep it short and readable by outsiders, and keep its links to the website and to `docs/proposal.md` working.
 - `docs/proposal.md` is the design of record. Don't edit it to match the code; if the code needs to depart from it, raise that first.
+- `docs/technical-decisions.md` records engineering choices the proposal leaves open. It must never contradict the proposal; if a decision would, raise it as a conflict.
 

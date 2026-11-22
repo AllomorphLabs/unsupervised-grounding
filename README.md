@@ -20,6 +20,7 @@ Proposal stage. Code will be added here as the pilot begins.
 
 - **[The full proposal](docs/proposal.md)**: hypotheses, experimental design, controls, analysis plan and work plan.
 - The same proposal as a Word document: [allomorphlabs.com/proposals/predicting-the-limits-of-unsupervised-grounding.docx](https://allomorphlabs.com/proposals/predicting-the-limits-of-unsupervised-grounding.docx)
+- **[Technical decisions](docs/technical-decisions.md)**: the engineering choices behind the code, such as language, tooling and how the invented language is split into tokens, and the reasons for each.
 
 ## Principles
 
