@@ -1,0 +1,8 @@
+# The pilot corpus: two interchangeable agents, state-vector observations.
+# The number of episodes is a starting point, to be revised by the pilot's power analysis.
+world: pilot
+episodes: 5000  # per stream
+min_len: 20
+max_len: 60
+held_out: 0.1
+recap: 0.1

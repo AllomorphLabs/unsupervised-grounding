@@ -14,7 +14,7 @@ There's an interactive demo of the idea on the website: <https://allomorphlabs.c
 
 ## Status
 
-Starting the pilot. The package skeleton, run records and tests are in place; the simulated world comes next.
+Pilot in progress. The simulated world, its symmetry search, the invented language and the paired data streams are built and tested; the two models come next.
 
 ## Running the code
 
@@ -23,6 +23,12 @@ You need [uv](https://docs.astral.sh/uv/), which installs the right Python versi
 ```
 uv sync
 uv run pytest
+```
+
+To build the pilot's paired data streams (written to `runs/`, about 15 seconds per pair):
+
+```
+uv run python -m grounding.data.make configs/pilot.yaml --pairs 0-9
 ```
 
 ## Documents

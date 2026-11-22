@@ -36,6 +36,7 @@ world relabels the sentences and changes nothing else (``tests/render/lang``).
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import NamedTuple
 
 import numpy as np
 
@@ -46,6 +47,16 @@ ROLES = ("obj", "to", "at", "now", "past")
 VERBS = ("be", "go", "take", "drop", "eat", "wait", "break", "hungry")
 
 Sentence = tuple[str, ...]
+KINDS = ("intro", "event", "effect", "recap")
+
+
+class Said(NamedTuple):
+    """What a sentence reports: its kind, the step it belongs to (-1 for the intro), and,
+    for a recap, the earlier step it repeats (-1 otherwise)."""
+
+    kind: str
+    step: int
+    of_step: int
 
 
 def inflections(world: World) -> dict[str, tuple[str, ...]]:
@@ -146,16 +157,27 @@ class Language:
         recap: float = 0.1,
     ) -> list[Sentence]:
         """Render one episode: the intro, then each step with side effects and recaps."""
+        return [s for s, _ in self.labelled_episode(start, steps, rng, recap)]
+
+    def labelled_episode(
+        self,
+        start: State,
+        steps: Sequence[tuple[Event, State]],
+        rng: np.random.Generator,
+        recap: float = 0.1,
+    ) -> list[tuple[Sentence, Said]]:
+        """As ``episode``, with what each sentence reports. The labels are ground truth."""
         intro = self.intro(start)
-        out = [intro[i] for i in rng.permutation(len(intro))]
+        out = [(intro[i], Said("intro", -1, -1)) for i in rng.permutation(len(intro))]
         before = start
         events: list[Event] = []
         for t, (e, after) in enumerate(steps):
-            out.append(self.event(e))
-            out.extend(self.side_effects(before, after))
+            out.append((self.event(e), Said("event", t, -1)))
+            out.extend((s, Said("effect", t, -1)) for s in self.side_effects(before, after))
             # Draw on every step, so the random stream never depends on the content.
             if rng.random() < recap and t > 0:
-                out.append(self.event(events[rng.integers(t)], "past"))
+                j = int(rng.integers(t))
+                out.append((self.event(events[j], "past"), Said("recap", t, j)))
             events.append(e)
             before = after
         return out

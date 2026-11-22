@@ -28,6 +28,8 @@ from dataclasses import dataclass
 from fractions import Fraction
 from itertools import permutations, product
 
+import numpy as np
+
 from grounding.sim.world import (
     AT,
     BROKEN,
@@ -54,6 +56,15 @@ class Relabel:
     def is_identity(self) -> bool:
         return all(
             i == j for perm in (self.agents, self.objects, self.places) for i, j in enumerate(perm)
+        )
+
+    @classmethod
+    def random(cls, world: World, rng: np.random.Generator) -> Relabel:
+        """A uniformly random relabelling, used to shuffle entity order (decision 11)."""
+        return cls(
+            tuple(int(i) for i in rng.permutation(len(world.agents))),
+            tuple(int(i) for i in rng.permutation(len(world.objects))),
+            tuple(int(i) for i in rng.permutation(len(world.places))),
         )
 
     def inverse(self) -> Relabel:

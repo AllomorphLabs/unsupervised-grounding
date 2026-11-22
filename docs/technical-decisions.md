@@ -17,6 +17,7 @@ Status is **Decided** (code follows it), **Proposed** (current plan, not yet con
 | 9 | Near-symmetries scored on the states the data visits, with one pre-registered main measure | Decided |
 | 10 | Pilot grammar: SOV, case and tense suffixes, every change said | Decided |
 | 11 | Nothing about entity order can bias the swap rate | Decided |
+| 12 | Corpus pairs: episode lengths, the actor mark and hidden ground truth | Decided |
 
 ## 1. Python 3.15, PyTorch, uv
 
@@ -67,7 +68,7 @@ runs/           # outputs (not committed)
 ## 6. Proposal rules enforced in code and tests
 
 - **Independent streams:** each corpus pair has one root seed. The two streams get separate child seeds via `numpy.random.SeedSequence.spawn`, and each samples its own episode lengths. A test checks that no boundaries or lengths line up.
-- **Hidden ground truth:** true states are stored in a separate labels file. Training loaders never open it; only `analysis/` does.
+- **Hidden ground truth:** everything that reveals what a token or slot means is stored under each pair's `hidden/` directory. Training loaders never open it; only `analysis/labels.py` does, and a test fails if any other module reaches for it.
 - **Symmetry tests:** small worlds are searched exhaustively against exact transition probabilities. Tests assert each world's expected group, for example {identity, agent swap} for the pilot world and the identity alone for the symmetry-free world.
 - **Renderer checks:** for every symmetry, relabelling a trace and then rendering it must give the same statistics as rendering it and then relabelling.
 - **Pre-registration firewall:** results of main conditions can't be loaded until `prereg/LOCK` records the commit at which the pre-registration was published. The calibration world is flagged so it can be used only to check the frozen method.
@@ -102,7 +103,7 @@ A near-symmetry is scored by comparing the real world's transitions with those o
 - **Averaged over the states the data visits.** Each state is weighted by its expected share of all steps in the corpus, computed exactly from the episode-start and episode-length distributions. Counting reachable states equally would make the score depend on how the state space happens to be laid out, not on what the models see. Weights are always passed explicitly, so the choice can't be made by accident.
 - **One main measure.** The violation rate is the weighted mean total variation distance: the expected share of steps on which the real and relabelled worlds disagree, matching the proposal's "how often relabelling and stepping disagree". Only this measure is used for the pre-registered rank-correlation test.
 - **Reported as extras.** The evidence rate (weighted mean KL divergence: how much each step tells the two labellings apart, infinite when one world can do something the other can't), and the violation rate under equal weighting as a sensitivity check.
-- **Same episode lengths in both streams.** Both streams draw lengths from the same distribution, sampled independently, so a symmetry has one violation rate rather than one per stream. The distribution itself is chosen when `data/` is built.
+- **Same episode lengths in both streams.** Both streams draw lengths from the same distribution, sampled independently, so a symmetry has one violation rate rather than one per stream. The distribution is set in decision 12.
 - **Only differences the streams can show.** Both renderers should expose every event, so that violations in the world are violations in the data. Where a renderer hides something, the violation rate is also computed on what that stream reveals, and both are reported.
 - **Graded series.** As well as the proposal's rank correlation across all near-symmetries in a world, each symmetry studied is also broken in graded steps (habit weights of 1, 1.1, 1.25, 1.5, 2 and 4, for example) to give a dose-response curve. Habit weights are exact fractions for this reason. This adds to the proposal's test rather than replacing it.
 
@@ -128,3 +129,13 @@ When two mappings fit equally well, as under an exact symmetry, alignment method
 5. **Every shuffle is recorded** with its pair. Analysis maps results back through them before scoring, and every run stays reproducible from its seeds.
 
 A test checks this works: on the tiny world, an aligner that ties perfectly between the two agents gives a swap rate near 50% across seeds, and near 0% or 100% with the shuffles turned off.
+
+## 12. Corpus pairs
+
+`python -m grounding.data.make configs/pilot.yaml --pairs 0-9` builds pairs 0 to 9 (root seeds 0 to 9) under `runs/pilot/pair-<k>/data/` (`data/corpus.py`).
+
+- **Episode lengths** are uniform from 20 to 60 steps in both streams, drawn independently per stream.
+- **Observation frames** are the start state, then the state after each step. Each frame also marks the agent that acted on that step, so every event, including a wait, is visible in both streams, as decision 9 asks.
+- **Held-out episodes:** 10% of each stream's episodes, chosen at random, are kept back for scoring.
+- **Layout:** the public files (`lang.npz`, `lang_tokens.json`, `obs.npz`) are all training code may read. Sentence labels, true states, the vocabulary and the slot shuffle are under `hidden/`. Each pair also gets a `run.json` run record.
+- **Pilot size:** 5,000 episodes per stream (about 1.5 million tokens and 200,000 frames), a starting point to be revised by the pilot's power analysis. A pair takes about 15 seconds to build.
