@@ -15,6 +15,8 @@ Status is **Decided** (code follows it), **Proposed** (current plan, not yet con
 | 7 | English glosses drafted with WordNet; stems and inflected forms both checked | Decided |
 | 8 | Exact transition tables, with no built-in asymmetry | Decided |
 | 9 | Near-symmetries scored on the states the data visits, with one pre-registered main measure | Decided |
+| 10 | Pilot grammar: SOV, case and tense suffixes, every change said | Decided |
+| 11 | Nothing about entity order can bias the swap rate | Decided |
 
 ## 1. Python 3.15, PyTorch, uv
 
@@ -74,7 +76,11 @@ runs/           # outputs (not committed)
 
 ## 7. English glosses and what the edit-distance check covers
 
-**Glosses.** A script in `scripts/`, run by hand, maps each concept to its chosen WordNet sense. It expands that sense into synonyms, adds inflected forms ("went", "rivers") and writes the result to a committed file, `configs/glosses.yaml`, which we then review and edit by hand. The vocabulary check reads only that file, so tests, CI and the package never depend on WordNet. WordNet (via `wn` and Open English WordNet) is a development-only dependency.
+**Glosses.** Each concept, with its chosen WordNet sense and any hand-written extras (irregular forms such as "went", and words WordNet misses), is listed in `configs/concepts.yaml`. `scripts/draft_glosses.py`, run by hand, expands each sense into its single-word synonyms plus regular inflections and writes `configs/glosses.yaml`, which is committed and reviewed as a diff. Fixes go in `concepts.yaml`, never in the generated file. The vocabulary check reads only `glosses.yaml`, so tests, CI and the package never depend on WordNet.
+
+- **Lexicon:** Princeton WordNet 3.0, via the `wn` package (`omw-en:1.4`), a development-only dependency.
+- **No named individuals:** the script refuses any sense WordNet marks as a named person or place (for example, "Bush" the president), so only ordinary-word senses can be chosen.
+- **Over-generation is harmless:** regular rules produce some non-words ("goed"). An extra gloss can only reject more candidates, which costs almost nothing.
 
 **Scope.** Both stems and full inflected forms (`sorrun` and `sorrunek`) are checked:
 
@@ -99,3 +105,26 @@ A near-symmetry is scored by comparing the real world's transitions with those o
 - **Same episode lengths in both streams.** Both streams draw lengths from the same distribution, sampled independently, so a symmetry has one violation rate rather than one per stream. The distribution itself is chosen when `data/` is built.
 - **Only differences the streams can show.** Both renderers should expose every event, so that violations in the world are violations in the data. Where a renderer hides something, the violation rate is also computed on what that stream reveals, and both are reported.
 - **Graded series.** As well as the proposal's rank correlation across all near-symmetries in a world, each symmetry studied is also broken in graded steps (habit weights of 1, 1.1, 1.25, 1.5, 2 and 4, for example) to give a dose-response curve. Habit weights are exact fractions for this reason. This adds to the proposal's test rather than replacing it.
+
+## 10. Pilot grammar
+
+The pilot language is built as the full language will be, so the morpheme tokens and the renderer checks are exercised from the start (`render/lang/`).
+
+- **Word order** is subject-object-verb, unlike English: `A glass-obj take-now`.
+- **Suffixes** mark each noun's role (`obj`, `to` a place, `at` a place) and each verb's tense (`now`, `past`). Subjects are unmarked.
+- **Every change is said.** An episode opens by saying where every agent and object starts. Each step gives the event, then any side effects: something breaking, an agent becoming hungry. A test rebuilds the full state after every step from the sentences alone.
+- **Tense carries meaning.** Steps are narrated in the present. After a step, with a set probability, a past-tense sentence repeats an earlier event from the same episode, so a model tracking the world must learn that past-tense sentences change nothing.
+- **No accidental asymmetry.** The opening sentences are shuffled, and every random choice is drawn the same way whatever entities are involved. A test checks that relabelling an episode relabels its sentences and changes nothing else, for any relabelling.
+- **Uniform word shapes.** Every stem has the shape consonant-vowel-consonant-vowel-consonant and every suffix vowel-consonant, so interchangeable entities can't differ in the length or shape of their names, even under a later character-level check.
+
+## 11. Nothing about entity order can bias the swap rate
+
+When two mappings fit equally well, as under an exact symmetry, alignment methods break the tie by taking the first best option, which means the lowest index. If agent A always had the lower token number or the first state-vector slot, every pair could resolve the tie the same way, and the swap rate would land near 0% or 100% even with perfect models. So:
+
+1. **A fresh vocabulary per pair**, drawn from the pair's language-stream seed. The English check runs on every draw.
+2. **Random token order per pair.** Token numbers come from a seeded shuffle, never from concept order.
+3. **Random slot order per pair.** Agent, object and place slots in the state vectors are shuffled with the observation-stream seed.
+4. **Random entity order in every alignment restart**, so a tie within a run doesn't fall to whichever entity comes first.
+5. **Every shuffle is recorded** with its pair. Analysis maps results back through them before scoring, and every run stays reproducible from its seeds.
+
+A test checks this works: on the tiny world, an aligner that ties perfectly between the two agents gives a swap rate near 50% across seeds, and near 0% or 100% with the shuffles turned off.

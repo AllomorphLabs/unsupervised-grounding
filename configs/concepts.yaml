@@ -1,0 +1,32 @@
+# Every concept the invented language has a word for, with its chosen WordNet sense
+# (Princeton WordNet 3.0, via the wn package's omw-en:1.4 lexicon) and any extra English
+# words to treat as glosses: irregular forms, and words WordNet misses.
+#
+# scripts/draft_glosses.py expands this into configs/glosses.yaml. Edit this file, not that one.
+#
+# Choose the ordinary-word sense, never a named person or place: the script refuses
+# senses WordNet marks as named individuals.
+#
+# Agents have no English meaning, so they have no glosses. Their names are still checked
+# against the common-English word list.
+
+places:
+  river: {sense: omw-en-09411430-n}
+  bush: {sense: omw-en-13112664-n, extra: [berry, berries]}  # where agents feed
+  cave: {sense: omw-en-09238926-n}
+  hill: {sense: omw-en-09303008-n}
+
+objects:
+  glass: {sense: omw-en-03438257-n}  # drinking glass
+  stone: {sense: omw-en-09416076-n}
+  apple: {sense: omw-en-07739125-n}
+
+verbs:
+  be: {sense: omw-en-02655135-v, extra: [is, are, was, were, been, am]}  # be somewhere
+  go: {sense: omw-en-01835496-v, extra: [went, gone]}
+  take: {sense: omw-en-01214265-v, extra: [took, taken, grab, grabs]}
+  drop: {sense: omw-en-01977701-v}
+  eat: {sense: omw-en-01168468-v, extra: [ate, eaten]}
+  wait: {sense: omw-en-02637938-v}
+  break: {sense: omw-en-00334186-v, extra: [broke, broken, smash, shatter]}
+  hungry: {sense: omw-en-01269073-a, extra: [hunger, hungrier, starve, starving]}  # become hungry
