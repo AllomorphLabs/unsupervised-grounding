@@ -23,6 +23,8 @@ packages = ["src/grounding"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Lets test files in different folders share a name (tests/x/test_a.py, tests/y/test_a.py).
+addopts = ["--import-mode=importlib"]
 
 [tool.ruff]
 line-length = 100
