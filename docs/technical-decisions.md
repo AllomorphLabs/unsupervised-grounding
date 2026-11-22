@@ -18,6 +18,7 @@ Status is **Decided** (code follows it), **Proposed** (current plan, not yet con
 | 10 | Pilot grammar: SOV, case and tense suffixes, every change said | Decided |
 | 11 | Nothing about entity order can bias the swap rate | Decided |
 | 12 | Corpus pairs: episode lengths, the actor mark and hidden ground truth | Decided |
+| 13 | Pilot models: one small causal transformer for both streams | Decided |
 
 ## 1. Python 3.15, PyTorch, uv
 
@@ -139,3 +140,14 @@ A test checks this works: on the tiny world, an aligner that ties perfectly betw
 - **Held-out episodes:** 10% of each stream's episodes, chosen at random, are kept back for scoring.
 - **Layout:** the public files (`lang.npz`, `lang_tokens.json`, `obs.npz`) are all training code may read. Sentence labels, true states, the vocabulary and the slot shuffle are under `hidden/`. Each pair also gets a `run.json` run record.
 - **Pilot size:** 5,000 episodes per stream (about 1.5 million tokens and 200,000 frames), a starting point to be revised by the pilot's power analysis. A pair takes about 15 seconds to build.
+
+## 13. Pilot models
+
+`python -m grounding.models.train runs/pilot/pair-000 --stream lang` (or `--stream obs`) trains one model of a pair, with settings from `configs/pilot-models.yaml` (`models/`).
+
+- **One architecture for both streams:** a causal transformer with 4 layers, width 128 and 4 heads, about 0.85M parameters, reading one whole episode at a time. The proposal's range starts at a few million parameters; this smaller size is for the pilot only, and the work plan scales up if H1 fails.
+- **Language model:** predicts the next token.
+- **Frame model:** predicts each of the next frame's values as an independent yes/no. It isn't told which values form a block, so the structure of the world isn't handed to it.
+- **Budget:** 20,000 steps or 10 minutes per model, whichever comes first. On the workstation GPU that is about 10 minutes for the language model and 5 for the frame model.
+- **Seeds:** each model's training seed is drawn from its own part of its stream's seed, so every pair and stream trains independently. Runs are exactly reproducible on the CPU; on the GPU they may differ in the last digits.
+- **PyTorch builds:** the CUDA 13.4 build on Windows (the workstation's RTX 3070 Ti, 8 GB) and the CPU build on Linux (CI). To revisit when training moves to a Linux GPU machine.

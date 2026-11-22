@@ -36,8 +36,9 @@ from grounding.sim.world import Event, State, World, sample_initial, state_to_ar
 from grounding.sim.worlds import make_world
 
 # Named random parts of each stream. Only ever append (see part_rngs).
-LANG_PARTS = ("vocab", "tokens", "sim", "render", "split")
-OBS_PARTS = ("slots", "sim", "split")
+LANG_PARTS = ("vocab", "tokens", "sim", "render", "split", "train")
+OBS_PARTS = ("slots", "sim", "split", "train")
+PARTS = {"lang": LANG_PARTS, "obs": OBS_PARTS}
 HIDDEN = "hidden"
 
 Episode = tuple[State, list[tuple[Event, State]]]
