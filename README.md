@@ -14,7 +14,7 @@ There's an interactive demo of the idea on the website: <https://allomorphlabs.c
 
 ## Status
 
-Pilot in progress. The simulated world, its symmetry search, the invented language and the paired data streams and the two models are built and tested; alignment comes next.
+Pilot in progress. The simulated world, the invented language, the paired data streams, the two models and the alignment are built and tested; the first pilot results come next.
 
 ## Running the code
 
@@ -25,7 +25,7 @@ uv sync
 uv run pytest
 ```
 
-To build the pilot's paired data streams (written to `runs/`, about 15 seconds per pair):
+To build the pilot's paired data streams (written to `runs/`):
 
 ```
 uv run python -m grounding.data.make configs/pilot.yaml --pairs 0-9
@@ -36,6 +36,15 @@ To train a pair's language and observation models (up to 10 minutes each on a GP
 ```
 uv run python -m grounding.models.train runs/pilot/pair-000 --stream lang
 uv run python -m grounding.models.train runs/pilot/pair-000 --stream obs
+```
+
+To align a pair's models, run the co-occurrence baseline, and score both against the ground truth:
+
+```
+uv run python -m grounding.align.run runs/pilot/pair-000 --kind model
+uv run python -m grounding.align.run runs/pilot/pair-000 --kind raw
+uv run python -m grounding.analysis.score runs/pilot/pair-000 --kind model
+uv run python -m grounding.analysis.score runs/pilot/pair-000 --kind raw
 ```
 
 ## Documents
