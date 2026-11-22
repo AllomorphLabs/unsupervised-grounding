@@ -1,0 +1,22 @@
+# Environments
+.venv/
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Build output
+build/
+dist/
+*.egg-info/
+
+# Experiment outputs (published separately, never committed)
+/runs/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
