@@ -37,6 +37,11 @@ uv run pytest
 - **Open.** The simulator, renderers, datasets, trained models and results will be published here, including null results.
 - **From scratch.** No pretrained weights or tokenisers are used, so nothing outside the experiment can leak into it.
 
+## Credits
+
+- The invented language is checked against English using word-frequency data from [wordfreq](https://github.com/rspeer/wordfreq) by Robyn Speer, licensed under [CC-BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
+- English glosses are drafted from [Princeton WordNet 3.0](https://wordnet.princeton.edu/) (Princeton University, "About WordNet", 2010), used under the [WordNet licence](https://wordnet.princeton.edu/license-and-commercial-use).
+
 ## Links
 
 - Website: <https://allomorphlabs.com>
