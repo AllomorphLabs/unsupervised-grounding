@@ -13,6 +13,8 @@ Status is **Decided** (code follows it), **Proposed** (current plan, not yet con
 | 5 | One installable package, `grounding` | Decided |
 | 6 | Proposal rules enforced in code and tests | Decided |
 | 7 | English glosses drafted with WordNet; stems and inflected forms both checked | Decided |
+| 8 | Exact transition tables, with no built-in asymmetry | Decided |
+| 9 | Near-symmetries scored on the states the data visits, with one pre-registered main measure | Decided |
 
 ## 1. Python 3.15, PyTorch, uv
 
@@ -56,7 +58,7 @@ src/grounding/
 configs/        # world and condition configs
 prereg/         # the pre-registration
 scripts/        # one-off tools run by hand
-tests/
+tests/          # mirrors src/grounding/, e.g. tests/sim/test_symmetry.py
 runs/           # outputs (not committed)
 ```
 
@@ -78,3 +80,22 @@ runs/           # outputs (not committed)
 
 - Words for actions, objects and places must be at least 3 edits from their glosses and at least 2 edits from each common English word.
 - The proposal's rule doesn't cover grammatical suffixes like `-ek`; any two-letter string is likely within 1 edit of some English word. Agent names have no English gloss but are still checked against the common-word list.
+
+## 8. Exact transition tables, with no built-in asymmetry
+
+The simulator lists every possible (event, next state) outcome of a state with its exact probability, as a fraction. Random stepping only samples from that list, so the symmetry search and the simulator can't drift apart, and exact symmetries are tested by exact equality, not within a tolerance.
+
+- **Events are part of the outcome.** The language stream describes events ("A drops the glass"), not just states, so a relabelling must map events as well as states.
+- **Nothing in the mechanics may tell interchangeable entities apart.** Each step, one agent chosen uniformly at random acts; a fixed turn order would make the agents distinguishable. Any future tie-breaks must be random for the same reason.
+- **Episode starts must be symmetric too.** As well as commuting with the dynamics, an automorphism must map the set of episode starts onto itself. Otherwise the data wouldn't be symmetric even though the rules are. This adds a condition to the proposal's definition rather than changing it.
+
+## 9. Scoring near-symmetries
+
+A near-symmetry is scored by comparing the real world's transitions with those of the relabelled world, state by state, and averaging over states (`sim/symmetry.py`, `sim/visits.py`).
+
+- **Averaged over the states the data visits.** Each state is weighted by its expected share of all steps in the corpus, computed exactly from the episode-start and episode-length distributions. Counting reachable states equally would make the score depend on how the state space happens to be laid out, not on what the models see. Weights are always passed explicitly, so the choice can't be made by accident.
+- **One main measure.** The violation rate is the weighted mean total variation distance: the expected share of steps on which the real and relabelled worlds disagree, matching the proposal's "how often relabelling and stepping disagree". Only this measure is used for the pre-registered rank-correlation test.
+- **Reported as extras.** The evidence rate (weighted mean KL divergence: how much each step tells the two labellings apart, infinite when one world can do something the other can't), and the violation rate under equal weighting as a sensitivity check.
+- **Same episode lengths in both streams.** Both streams draw lengths from the same distribution, sampled independently, so a symmetry has one violation rate rather than one per stream. The distribution itself is chosen when `data/` is built.
+- **Only differences the streams can show.** Both renderers should expose every event, so that violations in the world are violations in the data. Where a renderer hides something, the violation rate is also computed on what that stream reveals, and both are reported.
+- **Graded series.** As well as the proposal's rank correlation across all near-symmetries in a world, each symmetry studied is also broken in graded steps (habit weights of 1, 1.1, 1.25, 1.5, 2 and 4, for example) to give a dose-response curve. Habit weights are exact fractions for this reason. This adds to the proposal's test rather than replacing it.
