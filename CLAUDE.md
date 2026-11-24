@@ -38,7 +38,8 @@ These are design commitments. Don't relax any of them without asking first.
 
 Every main result needs these alongside it:
 
-- **Co-occurrence alignment:** matching raw word and state statistics, with no neural model.
+- **Co-occurrence alignment:** the same alignment on raw word and state statistics, with no neural model.
+- **Lookup-table world model:** the frame model replaced by counted transitions, to measure what the learned world model adds.
 - **Scrambled world:** the same entities with randomised causal rules.
 - **Grammar only:** invented syntax with random words and no world behind it.
 - **Symmetry-free world:** sets the noise floor for H3.

@@ -48,14 +48,13 @@ taught us.
 - **Next:** decide with the user on the open issues below, then the pilot write-up and the
   literature check (phase 2).
 - **Open issues for the proposal:**
-  - *Change of method.* The proposal names representation-level alignment (vec2vec-style,
-    quadratic assignment). Those failed here (experiments 1-20). Decipherment uses the frame
-    model as a generator of frame histories, and uses the raw words as well as the language
-    model's summaries. This needs to be raised as a change to the proposal.
+  - *Change of method: now in the proposal.* The proposal was revised after the pilot to adopt
+    decipherment in place of representation-level alignment (which failed in experiments 1-20),
+    with a reworded working definition and the lookup-table control added.
   - *The agent swap is fixed by construction.* The search fixes the agents' order, so which agent
     word lands on which frame agent comes from arbitrary numbering. A 50% swap rate across pairs
-    would follow automatically, so it can't yet count as evidence for H3. The main phase should
-    search both orders and show that they tie.
+    would follow automatically, so it can't yet count as evidence for H3. The revised proposal
+    requires the search to cover every order; the code still has to be changed to do this.
   - *Hand-built scaffolding.* Structure discovery (one-of-n blocks, the "acted" flags, word types
     from suffixes) and the role tables encode knowledge of how this world and language are
     formatted. No truth goes in, but it limits how general the method is.

@@ -260,12 +260,11 @@ runs/pilot/pair-001` aligns a pair, and `python -m grounding.analysis.score runs
   failed on objects (entry 42), and the word model and summary inputs were changed in response
   (entries 43-46), so pair 1 is a tuning pair, not a confirmation. Pair 2 is run once with the
   method frozen again, only if it selects the true matching on pairs 0 and 1.
-- **A departure from the proposal.** The proposal names representation-level methods
-  (vec2vec-style, cycle-consistent, quadratic assignment), and its working definition maps the
-  language model's representations onto the grounded model's. Those methods failed here
-  (entries 1-20). Decipherment uses the frame model as a generator of frame histories rather than
-  for its hidden representations, and uses the raw words as well as the language model's
-  summaries. This must be raised as a change to the proposal before the main phase.
+- **The proposal now names this method.** It first named representation-level methods
+  (vec2vec-style, cycle-consistent, quadratic assignment), which failed here (entries 1-20). Its
+  revision after the pilot adopts decipherment, rewords the working definition to match, adds the
+  counted-transitions control and requires the search to cover every agent order (proposal,
+  "Pilot results and revisions").
 - **Controls:** `frame_model: counts` replaces the frame model with counted transitions from
   the frame stream (nearest seen frame where unseen). `configs/pilot-decipher-baseline.yaml` (counted
   transitions, no language model) is the co-occurrence control; `configs/pilot-decipher-counts.yaml`
