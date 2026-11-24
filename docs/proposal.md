@@ -1,8 +1,10 @@
 # Predicting the Limits of Unsupervised Grounding
 
-20 November 2026 · Shane
+20 November 2026 · Shane · revised 24 November 2026 after the pilot
 
 *Also published as a Word document on the Allomorph website: [predicting-the-limits-of-unsupervised-grounding.docx](https://allomorphlabs.com/proposals/predicting-the-limits-of-unsupervised-grounding.docx). The two versions have the same content; if you change one, change the other.*
+
+*Revised after the pilot, before any pre-registration. The alignment method has changed from matching representations to decipherment, and one control has been added. The section [Pilot results and revisions](#pilot-results-and-revisions) lists every change and the reasons for it.*
 
 ## In plain terms
 
@@ -48,7 +50,7 @@ These positions are hard to separate with real data. In natural text and images 
 
 **Claim to be tested.** Gradient descent on form alone recovers structure that aligns with perception-derived structure, up to and only up to the world's symmetries.
 
-**Working definition.** A form-only model's representations carry meaning, in the sense tested here, if an unsupervised procedure maps them onto a grounded model's representations so that held-out sentences land on the world states that generated them. Any remaining ambiguity should match the world's symmetries. The mapping uses no labels, no probes trained on world facts and no paired examples.
+**Working definition.** A form-only model's representations carry meaning, in the sense tested here, if an unsupervised procedure can use them, together with a grounded model of the world, to map held-out sentences onto the world states that generated them. Any remaining ambiguity should match the world's symmetries. The mapping uses no labels, no probes trained on world facts and no paired examples.
 
 **What this does and does not test.** The language model never sees the world, but the alignment step has access to both models. The experiment therefore tests whether meaning can be *recovered* from a form-only learner by matching it to a grounded learner, not whether text alone constitutes meaning. It is a cross-modal test of the Platonic hypothesis, in a setting where every quantity is known.
 
@@ -77,6 +79,8 @@ Structure alone can identify referents only up to the world's automorphisms: rel
 
 - A single alignment outputs one mapping, so an exact symmetry shows up across independent runs, not within one. Two interchangeable agents should be swapped in about half of runs and never partly confused within a run.
 
+- The swap must be free to happen. If the alignment search fixed the order of interchangeable entities and broke ties by their numbering, a 50% swap rate would follow from that numbering, not from the evidence. The search therefore covers every order, and the fit of the two tied mappings is reported for each pair.
+
 - "Independent" means independently sampled corpora and training seeds. A finite corpus never preserves a symmetry perfectly, so one model pair may consistently favour one mapping by chance. Restarting alignment on a single pair measures optimiser behaviour, which is reported separately.
 
 - A mirror-symmetric layout should swap "left" and "right" together, as a pair, along with the objects on each side.
@@ -99,15 +103,15 @@ One simulated world produces two independent streams, language and observation, 
 
 4.  **Train.** Small transformers, from a few million to about 100M parameters: a language model on the language stream and a next-frame predictor on the observation stream. At least 10 independently sampled corpora and seeds per condition, with the final number set by a power analysis from the pilot.
 
-5.  **Align.** In rising difficulty: entity-level matching of word embeddings to object and agent representations; event-level alignment of sentence and state-transition representations, using adversarial and cycle-consistent methods (vec2vec-style) and quadratic-assignment matching (Schnaus et al., 2025); then a full cycle-consistent mapping between the models. Each alignment is restarted many times.
+5.  **Align, by decipherment.** Read the language stream as a code for a hidden sequence of world states, as statistical decipherment reads an unknown script (Knight et al., 2006; Ravi & Knight, 2011). The world model proposes how the state can change from moment to moment. The words, and the language model's summary of each sentence, weigh each proposed history. Expectation-maximisation learns how each kind of fact is put into words, under a candidate *matching* of words to entities. The matching kept is the one whose fit best explains held-out sentences. No labels or paired examples are used at any point. The candidate matchings cover every relabelling, including the world's symmetries, so a tie between two symmetric matchings is measured rather than broken by how the entities happen to be numbered. Each alignment is restarted several times.
 
-6.  **Score.** For held-out sentences, check whether the mapped representation lands on the true world state that generated the sentence. Report accuracy both raw and modulo the symmetry group, and record the full confusion pattern.
+6.  **Score.** For each held-out sentence, check whether the world state it is decoded to is the true state that generated it. Report accuracy both raw and modulo the symmetry group, and record the full confusion pattern.
 
-7.  **Diagnose.** Because the true mapping is known, compute the alignment objective for both the true mapping and the mapping found. If the found mapping scores better than the truth, the models genuinely encode the world differently. If it scores the same, the ambiguity is genuine, as predicted for exact symmetries. If it scores worse, the optimiser failed. Only the first two kinds of error count as evidence about H3.
+7.  **Diagnose.** Because the true mapping is known, compute the alignment objective (the fit to held-out sentences) for both the true mapping and the mapping found. If the found mapping scores better than the truth, the models genuinely encode the world differently. If it scores the same, the ambiguity is genuine, as predicted for exact symmetries. If it scores worse, the optimiser failed. Only the first two kinds of error count as evidence about H3.
 
 8.  **Sweep.** Break symmetries one at a time; vary the overlap between the described and observed worlds, world richness, corpus size and model size.
 
-**Starting points.** Othello-GPT's public code for probing and interventions; the MUSE and vec2vec codebases for alignment.
+**Starting points.** Othello-GPT's public code for probing and interventions; the statistical decipherment literature (Knight et al., 2006; Snyder, Barzilay & Knight, 2010; Ravi & Knight, 2011) for alignment.
 
 ## Controls, baselines and threats to validity
 
@@ -115,7 +119,8 @@ Each control rules out one cheap explanation for a positive result.
 
 | Control or baseline         | What it is                                                                             | What it rules out                                             |
 |-----------------------------|----------------------------------------------------------------------------------------|---------------------------------------------------------------|
-| Co-occurrence alignment     | Align raw word and state co-occurrence statistics, with no neural model                | Success that needs no learned world model                     |
+| Co-occurrence alignment     | The same decipherment on raw word and state statistics, with no neural model           | Success that needs no learned model                           |
+| Lookup-table world model    | The world model replaced by counts of the state changes seen in the observation stream | Success that needs no learned model of perception             |
 | Scrambled world             | Same entities, randomised causal rules                                                 | Alignment from co-occurrence rather than causal structure     |
 | Grammar only                | Invented syntax with random words and no world behind it                               | Alignment driven by syntax or formatting; should be at chance |
 | Symmetry-free world         | A world built to have no automorphisms                                                 | Sets the noise floor for H3                                   |
@@ -133,6 +138,10 @@ Each control rules out one cheap explanation for a positive result.
 - **Alignment-method overfitting.** The alignment procedure and its hyperparameters are fixed on the cipher control, then frozen before the main conditions are run. Because the cipher pairs two language models, the frozen procedure is also checked on a separate calibration world, used for nothing else, with both language and observation streams.
 
 - **Optimiser failure mistaken for model failure.** Handled by the objective diagnostic in the design.
+
+- **An aligner that does the work.** Decipherment is itself a model of how words express facts, and a strong one could succeed with little help from the trained models. The co-occurrence and lookup-table controls run the identical decipherment with one or both trained models taken out, so they measure what each model contributes.
+
+- **Structure supplied to the aligner.** Before the streams are compared, each one's units are grouped into kinds: words into agents, objects, places and verbs, and state values into entities. This uses each stream on its own, with no pairing and no ground truth. In the pilot, however, the grouping is written for this world's formats, which is experimenter-supplied structure. Replacing it with a general procedure is [TBD]; until then it is reported as a limitation.
 
 - **Renderer-induced asymmetry.** Handled by the renderer checks.
 
@@ -156,6 +165,8 @@ All predictions, thresholds, tests and analyses are pre-registered before the ma
 
 - **H4.** Accuracy is reported as a curve against world overlap and world richness, with uncertainty across independent pairs. No single threshold: the shape of the curve is the result.
 
+- **What each model adds.** Accuracy with the lookup-table world model is reported beside every H2 result, as a measure of what the learned world model adds. It is not part of the H2 test.
+
 - **Reporting.** Full confusion matrices, the objective diagnostic, every control and both observation conditions are reported, including null results.
 
 ## Expected outcomes and interpretation
@@ -167,6 +178,7 @@ Every outcome is informative; only the first supports the claim in full.
 | Beats all baselines                            | Errors match symmetries           | Form-only structure aligns with perception up to symmetry in closed worlds; strong support for the cross-modal Platonic hypothesis and a measured version of the structuralist limit |
 | Beats all baselines                            | Errors don't match                | Models align, but residual ambiguity comes from the models rather than the world; the objective diagnostic shows where the representations diverge                                   |
 | Partial: some entity types align, others don't | Errors match within aligned types | Meaning is recovered for some kinds of entity; which kinds, and why, becomes the main finding                                                                                        |
+| Beats all baselines, but the lookup-table world model does as well | Tested as above | The language model's structure aligns with the world, but a memorised table of what was seen is as good a partner as a learned world model; a richer world is needed to test the perceiving model's part |
 | Matches the co-occurrence baseline only        | Not tested                        | Meaning is recoverable from raw statistics; learned world models add nothing at this scale                                                                                           |
 | Fails                                          | Not tested                        | If H1 holds, language models build world models in formats that don't line up with perception; evidence against the Platonic hypothesis                                              |
 
@@ -184,7 +196,8 @@ The contribution is the combination of a controlled world, ground-truth scoring 
 | Representational convergence (Huh et al., 2024; Jha et al., 2025)                                                        | Models converge on shared structure; text embeddings translate without pairs   | Tests convergence across language and perception with known ground truth                        |
 | Blind vision-language matching (Schnaus et al., 2025)                                                                    | Real vision and language embeddings can often be matched without parallel data | Known referents, known symmetries and controlled overlap; predicts which errors are unavoidable |
 | Unsupervised translation (Conneau et al., 2018; Lample et al., 2018; Artetxe et al., 2018; Søgaard, Ruder & Vulić, 2018) | Works when spaces are near-isomorphic; fails when they are not                 | Measures the failure curve directly by sweeping world overlap                                   |
-| Theory of unsupervised translation (Goldwasser et al., 2023)                                                             | Translation without parallel data is possible given common ground              | Tests the prediction with neural models and representation-level alignment                      |
+| Theory of unsupervised translation (Goldwasser et al., 2023)                                                             | Translation without parallel data is possible given common ground              | Tests the prediction with trained neural models in a world where the common ground is known     |
+| Statistical decipherment (Knight et al., 2006; Snyder, Barzilay & Knight, 2010; Ravi & Knight, 2011)                     | Ciphers, lost scripts and foreign text can be read by fitting a model of the hidden source | The hidden source is a world state proposed by a separately trained perceiving model, and the residual errors are predicted from the world's symmetries |
 | Meaning from form (Bender & Koller, 2020; Piantadosi & Hill, 2022; Patel & Pavlick, 2022; Abdou et al., 2021)            | Argument and evidence on whether text-only models acquire meaning              | Measures how much is fixed and what is left undetermined                                        |
 | Structural realism (Newman, 1928)                                                                                        | Structure determines its referents only up to isomorphism                      | Computes that isomorphism class in advance and tests it empirically                             |
 
@@ -202,6 +215,8 @@ The results apply to closed synthetic worlds at small scale. Extending them to r
 
 - Small worlds may lack the richness that makes alignment possible at scale. Null results at small scale are weaker evidence than positive ones.
 
+- In a world small enough to see nearly every situation, a lookup table of observed changes is almost as good a partner for alignment as a learned world model. The pilot showed exactly this, so the perceiving model's contribution can only be tested properly in richer worlds.
+
 **Open questions.**
 
 - How large and rich must a world be before results transfer to real language models?
@@ -212,13 +227,40 @@ The results apply to closed synthetic worlds at small scale. Extending them to r
 
 - Which observation format best balances perceptual realism against tractability?
 
+## Pilot results and revisions
+
+The pilot (phase 1) is complete, and both parts of its gate are met. The full record, including every failed attempt, is in the project's [experiment log](alignment-attempts.md).
+
+**Setting.** Two interchangeable agents, three objects and four places on a path. Observations are 45 yes/no state values per moment, in shuffled order. Each stream trains its own small transformer from scratch. The method was developed on two corpus pairs. Because it was changed after the second pair was seen, that pair counts as tuning, not as a confirmation. The method was then frozen and run once on a third, untouched pair.
+
+**Results.** The frozen method, which never sees the ground truth, found the true word-to-entity matching on all three pairs, up to the predicted agent swap. Accuracy is the share of held-out sentences decoded to exactly the right world state, with all 45 values correct, up to the world's symmetry (here, the order of the two agents).
+
+| Pair                   | The method | Lookup-table world model | Co-occurrence (no neural model) |
+|------------------------|------------|--------------------------|---------------------------------|
+| 0 (development)        | 64.7%      | 61.9%                    | 0.8%                            |
+| 1 (tuning)             | 44.0%      | 32.9%                    | 1.0%                            |
+| 2 (confirmation)       | 70.1%      | 63.0%                    | 0.6%                            |
+| Mean                   | 59.6%      | 52.6%                    | 0.8%                            |
+
+Chance is about 0.02%. Without the language model's sentence summaries, alignment falls to chance, so the language model is essential. The learned world model adds 3–11 points over the lookup table on every pair. On the confirmation pair, raw word counts alone ranked a wrong matching first.
+
+**Variance.** Across three restarts of each pair, accuracy varies by a standard deviation of about 2.7 points within a pair, against about 15.8 points between pairs. As the analysis plan assumes, the independent pair is the unit that matters. The power analysis that uses these figures is done in phase 3 ([TBD]).
+
+**What changed in this proposal, and why.**
+
+- **Alignment method.** The original design matched the two models' representations directly: adversarial and cycle-consistent mapping (vec2vec-style) and quadratic-assignment matching. In the pilot these failed even on the easiest control, two observation streams that differ only in the order of their values. The reason is that single moments don't reveal which places are next to which, so many wrong mappings fit the static picture as well as the true one. What identifies the mapping is the dynamics, meaning how states change over time. Decipherment uses the dynamics directly (design step 5).
+- **Working definition.** The definition used to say the language model's representations are mapped onto the grounded model's representations. Decipherment instead uses the grounded model as a source of possible world histories, and the language model's summaries and the words as evidence for them. The definition now says this.
+- **New control.** The lookup-table world model, added because the pilot showed that a small world can be aligned nearly as well without a learned perceiving model.
+- **Agent order.** The pilot's search fixed the order of the two interchangeable agents, so its 50% swap rate would be automatic. The design now requires the search to cover every order (see the predictions for exact symmetries). In the pilot the two orders' fits tied to within 0.01.
+- **Threats to validity.** Two added: an aligner that does the work, and structure supplied to the aligner.
+
 ## Work plan and resources
 
 The work runs in five gated phases over about eight months, all at single-GPU scale. Durations and compute are initial estimates, to be revised after the pilot.
 
-1.  **Pilot (2 weeks).** Two interchangeable agents among a handful of distinguishable objects and places (so there is something to align beyond the symmetric pair), state-vector observations only. Gate: alignment beats the co-occurrence baseline, and variance estimates are in hand for the power analysis.
+1.  **Pilot (2 weeks; complete).** Two interchangeable agents among a handful of distinguishable objects and places (so there is something to align beyond the symmetric pair), state-vector observations only. Gate: alignment beats the co-occurrence baseline, and variance estimates are in hand for the power analysis.
 
-2.  **Literature and novelty check (2 weeks).** Detailed review of Goldwasser et al. (2023) and Schnaus et al. (2025), alongside the probing and unsupervised-translation literature. Gate: the design is confirmed as novel or adjusted.
+2.  **Literature and novelty check (2 weeks).** Detailed review of Goldwasser et al. (2023) and Schnaus et al. (2025), alongside the probing, unsupervised-translation and decipherment literature. Gate: the design is confirmed as novel or adjusted.
 
 3.  **World, streams and pre-registration (6 weeks).** Build the simulator with switchable symmetries, both renderers and all controls. Compute each world's symmetry group, run the renderer checks, and pre-register predictions, thresholds and tests. Gate: pre-registration published.
 
@@ -251,6 +293,8 @@ The work runs in five gated phases over about eight months, all at single-GPU sc
 
 - [Jin & Rinard (2024), Emergent Representations of Program Semantics in Language Models Trained on Programs](https://proceedings.mlr.press/v235/jin24e.html), ICML 2024
 
+- [Knight, Nair, Rathod & Yamada (2006), Unsupervised Analysis for Decipherment Problems](https://aclanthology.org/P06-2065/), COLING/ACL 2006
+
 - [Lample, Conneau, Denoyer & Ranzato (2018), Unsupervised Machine Translation Using Monolingual Corpora Only](https://arxiv.org/abs/1711.00043), ICLR 2018
 
 - [Li et al. (2023), Emergent World Representations: Exploring a Sequence Model Trained on a Synthetic Task](https://arxiv.org/abs/2210.13382); code: [othello_world](https://github.com/likenneth/othello_world)
@@ -263,6 +307,10 @@ The work runs in five gated phases over about eight months, all at single-GPU sc
 
 - [Piantadosi & Hill (2022), Meaning without Reference in Large Language Models](https://arxiv.org/abs/2208.02957)
 
+- [Ravi & Knight (2011), Deciphering Foreign Language](https://aclanthology.org/P11-1002/), ACL 2011
+
 - [Schnaus, Araslanov & Cremers (2025), It's a (Blind) Match! Towards Vision-Language Correspondence without Parallel Data](https://arxiv.org/abs/2503.24129)
+
+- [Snyder, Barzilay & Knight (2010), A Statistical Model for Lost Language Decipherment](https://aclanthology.org/P10-1107/), ACL 2010
 
 - [Søgaard, Ruder & Vulić (2018), On the Limitations of Unsupervised Bilingual Dictionary Induction](https://aclanthology.org/P18-1072/), ACL 2018
