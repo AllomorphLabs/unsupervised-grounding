@@ -33,6 +33,7 @@ import yaml
 
 from grounding.data.corpus import PARTS
 from grounding.data.load import load_lang, load_obs
+from grounding.data.tokens import STOP
 from grounding.models.transformer import FrameModel, LanguageModel, ModelConfig, count_parameters
 from grounding.runs.record import make_record, read_record, write_record
 from grounding.runs.seeds import part_rngs
@@ -48,6 +49,7 @@ class TrainConfig:
     eval_every: int = 500
     max_minutes: float = 10.0
     validation: float = 0.1  # share of training episodes used to choose the best step
+    amp: bool = False  # bfloat16 mixed precision on the GPU: faster, slightly less exact
 
 
 @dataclass(frozen=True)
@@ -83,6 +85,7 @@ class Batches:
             s = load_lang(data_dir)
             self.data = torch.from_numpy(s.tokens.astype(np.int64))
             self.vocab = len(s.words)
+            self.anchor = s.words.index(STOP)  # sentence ends: public structure
         elif stream == "obs":
             s = load_obs(data_dir)
             self.data = torch.from_numpy(s.frames.astype(np.float32))
@@ -101,7 +104,7 @@ class Batches:
 
     def make_model(self, cfg: ModelConfig) -> torch.nn.Module:
         if self.stream == "lang":
-            return LanguageModel(self.vocab, cfg)
+            return LanguageModel(self.vocab, cfg, anchor=self.anchor if cfg.future else None)
         return FrameModel(self.frame_size, cfg)
 
     def batch(self, spans: list[tuple[int, int]]):
@@ -175,7 +178,8 @@ def train(
         for g in opt.param_groups:
             g["lr"] = _lr(step, tc)
         picks = rng.choice(len(data.train), size=min(tc.batch_size, len(data.train)), replace=False)
-        loss = model.loss(*data.batch([data.train[i] for i in picks]))
+        with torch.autocast(dev.type, dtype=torch.bfloat16, enabled=tc.amp and dev.type == "cuda"):
+            loss = model.loss(*data.batch([data.train[i] for i in picks]))
         opt.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -215,6 +219,7 @@ def train(
             "stream": stream,
             "model": asdict(model_cfg),
             "size": data.vocab if stream == "lang" else data.frame_size,
+            "anchor": data.anchor if stream == "lang" and model_cfg.future else None,
             "state": model.state_dict(),
             "summary": summary,
         },
@@ -226,10 +231,20 @@ def train(
     return summary
 
 
+# Decision 15: the pilot language model is larger than the frame model (decision 13).
+DEFAULT_CONFIGS = {
+    "lang": Path("configs/pilot-lang.yaml"),
+    "obs": Path("configs/pilot-models.yaml"),
+}
+
+
 def load_model(model_dir: Path, device: str = "cpu") -> torch.nn.Module:
     saved = torch.load(Path(model_dir) / "model.pt", map_location=device, weights_only=True)
     cfg = ModelConfig(**saved["model"])
-    model = (LanguageModel if saved["stream"] == "lang" else FrameModel)(saved["size"], cfg)
+    if saved["stream"] == "lang":
+        model = LanguageModel(saved["size"], cfg, anchor=saved.get("anchor"))
+    else:
+        model = FrameModel(saved["size"], cfg)
     model.load_state_dict(saved["state"])
     return model.to(device).eval()
 
@@ -238,10 +253,12 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     p.add_argument("pair", type=Path)
     p.add_argument("--stream", choices=("lang", "obs"), required=True)
-    p.add_argument("--config", type=Path, default=Path("configs/pilot-models.yaml"))
+    p.add_argument("--config", type=Path, default=None, help="default: DEFAULT_CONFIGS[stream]")
     p.add_argument("--device", default=None)
+    p.add_argument("--out", type=Path, default=None, help="model folder; default: models/<stream>")
     args = p.parse_args()
-    summary = train(args.pair, args.stream, ModelsConfig.from_yaml(args.config), args.device)
+    config = ModelsConfig.from_yaml(args.config or DEFAULT_CONFIGS[args.stream])
+    summary = train(args.pair, args.stream, config, args.device, out=args.out)
     print(json.dumps(summary, indent=2))
 
 

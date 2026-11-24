@@ -1,0 +1,1116 @@
+# Pilot experiment log
+
+A step-by-step record of every experiment in the pilot (phase 1): what we tried, why, what
+happened, and what it means. It exists so the proposal can later be updated with what the pilot
+taught us.
+
+**How this file works**
+
+- Entries are numbered and in the order they were run. **Old entries are never rewritten.** If a
+  later experiment changes how an earlier result should be read, a new entry says so.
+- The only section that gets updated is "Where we are now", just below.
+- Each entry has the same four parts: **Why** (the question or problem behind it), **How** (what
+  we did, in plain words first, then the technical specifics: models, settings, data sizes,
+  scripts), **Result** and **Meaning**.
+- All results are for pilot pair 0 unless stated. Numbers are copied from the run outputs
+  (detailed logs are in `runs/pilot-notes.md` and `runs/*.log`, which are not committed).
+- The simulator's true states are used **only to score** results, never to fit anything.
+
+## Where we are now
+
+*(Updated as the work moves on. Last updated after experiment 54.)*
+
+- Both trained models work. The language model holds the world's state (readable at about 97%),
+  and the frame model predicts whole next frames almost perfectly.
+- **Pair 0:** the whole pipeline runs without the truth and selects the true matching, decoding
+  75% of whole frames exactly right from language alone, with no paired data (experiments
+  39-40).
+- **Pair 1, a fresh pair, failed at first** (experiment 42): objects at chance. The cause was a
+  hidden assumption that held on pair 0 by chance: pair 0's language model stored object
+  positions in a form a straight line could read, and pair 1's doesn't. The fix is a word model
+  in which each sentence states one fact (experiment 44): pair 1 goes from 0.5% to 43% of frames
+  exactly right under the true matching, and pair 0 stays at about 74%.
+- **Purity so far:** without the language model's summaries, alignment falls to chance even
+  with the better word model (experiments 43 and 45). The trained language model, not raw word
+  statistics, carries the alignment.
+- **The clean confirmation passed** (experiments 49-51). With the method frozen and no truth
+  used, it selects the true matching on pairs 0 and 1, and then on the fresh pair 2, run once:
+  **70% of held-out frames exactly right** on pair 2 (64.6% on pair 0, 43.8% on pair 1), with the
+  predicted agent swap. On pair 2, raw counts alone would have picked a wrong matching.
+- **The pilot's alignment gate is met** (experiment 53). Mean across the three pairs: 59.5% of
+  frames exactly right for the method, 52.6% with a lookup table in place of the frame model, and
+  0.8% for the no-neural-model co-occurrence control. Both trained models earn their place, and
+  the language model is essential.
+- **Variance estimates are in hand** (experiment 54): restarts within a pair vary by about 2.7
+  points (standard deviation), pairs by about 15.8 points around a mean of 60%. Almost all the
+  variation is between pairs, as the proposal's unit of analysis assumes. **Both parts of the
+  pilot gate are met.**
+- **Next:** decide with the user on the open issues below, then the pilot write-up and the
+  literature check (phase 2).
+- **Open issues for the proposal:**
+  - *Change of method.* The proposal names representation-level alignment (vec2vec-style,
+    quadratic assignment). Those failed here (experiments 1-20). Decipherment uses the frame
+    model as a generator of frame histories, and uses the raw words as well as the language
+    model's summaries. This needs to be raised as a change to the proposal.
+  - *The agent swap is fixed by construction.* The search fixes the agents' order, so which agent
+    word lands on which frame agent comes from arbitrary numbering. A 50% swap rate across pairs
+    would follow automatically, so it can't yet count as evidence for H3. The main phase should
+    search both orders and show that they tie.
+  - *Hand-built scaffolding.* Structure discovery (one-of-n blocks, the "acted" flags, word types
+    from suffixes) and the role tables encode knowledge of how this world and language are
+    formatted. No truth goes in, but it limits how general the method is.
+  - *Easy on counts.* On pairs 0 and 1, raw word counts already rank the true matching first
+    (experiments 19, 37 and 42). On pair 2 they didn't, and the models still found it
+    (experiment 51), but the shortlist still relies on counts to cut 144 matchings to 6.
+  - *Pair 1 is a tuning pair.* The method was changed after seeing it, so it doesn't count as a
+    confirmation. Pair 2 is the confirmation.
+
+## The setup, in brief
+
+- **The world:** two agents (A and B), three objects (glass, stone, apple) and four places on a
+  path: river, bush, cave, hill. Agents move between neighbouring places, pick things up, drop
+  them (the glass breaks), get hungry, and eat (at the bush, or by eating the apple).
+- **Two streams of data, from separate runs of the world:**
+  - *Language:* sentences in an invented language describing what happens, such as "A goes to
+    the river" or "the glass breaks".
+  - *Frames:* a list of 45 yes/no values per moment, such as "A is at the river" or "the stone is
+    held by B". The order of the values is shuffled, so their meaning isn't given away.
+- **Two models, one per stream,** each trained only on its own stream to predict what comes next.
+- **The goal (alignment):** without ever being shown which sentence goes with which frame, work
+  out which frame each sentence describes.
+- **Symmetry:** A and B behave identically, so no method can tell which agent word means which
+  frame agent. Swapping them is the one confusion that *should* remain. The places also have a
+  near-symmetry: the path looks the same backwards (river ↔ hill, bush ↔ cave), and only the
+  fact that eating happens at the bush breaks it.
+
+## Glossary
+
+- **Probe:** a small model trained *with* the true answers, to check whether information is
+  present inside another model. A probe score of 0.97 means the information can be read out 97%
+  of the time. Probes are diagnostics only.
+- **Chance:** the score you'd get by guessing (for example, shuffling the predictions). A result
+  only means something if it clearly beats chance.
+- **Held-out:** data kept aside and never used for fitting, so scores on it show whether a
+  result generalises.
+- **Oracle or ceiling:** the same method fitted using the true answers. It shows the best the
+  method could possibly do, and so whether a failure is in the method or in the search.
+- **Fit score (log-likelihood per sentence):** how well a model predicts the held-out sentences.
+  Closer to zero is better: -4.1 beats -4.2. These numbers can only be compared between runs of
+  the same kind of model.
+- **Restart:** running the same fitting procedure again from a different random starting point.
+  The spread between restarts is the **noise**; a difference smaller than the noise means nothing.
+- **EM (expectation-maximisation):** a standard way to fit a model with hidden parts. Guess the
+  hidden parts, update the model to fit the guesses, and repeat. It can get stuck in a wrong but
+  self-consistent answer (a **local optimum**).
+- **Matching:** which invented word means which agent, object and place in the frames. There are
+  144 possible matchings: 6 orders for the objects times 24 for the places, with the agents fixed
+  because of their symmetry.
+- **Particle filter:** a way of tracking a hidden sequence by keeping many guesses ("particles")
+  at once. At each step, each guess is extended and weighted by how well it explains the
+  evidence, and poor guesses are dropped.
+
+## Experiments
+
+Scripts named below are scratch scripts kept outside the repository; settings that became part
+of the package are in `docs/technical-decisions.md`.
+
+### Session 1: first pilot run
+
+**1. First end-to-end alignment (vec2vec).**
+- *Why:* to run the proposal's planned pipeline end to end and see where it stands.
+- *How:* we used the proposal's original method, vec2vec. It learns a mapping between the two
+  models' internal representations by making their overall distributions look alike.
+  - Language model: 4-layer causal transformer, width 128, 0.86M parameters, 10 minutes (14,364
+    steps, held-out loss 0.435).
+  - Frame model: the same architecture, 20,000 steps in 5.2 minutes (held-out loss 0.116), each
+    of the 45 values predicted as an independent yes/no.
+  - Aligned: last-layer hidden states at sentence ends against those at frames, using 5,000
+    episodes per side.
+  - Scoring: 1,000 held-out episodes per side. Each mapped sentence takes the true state of its
+    nearest frame.
+  - 20 restarts, about 40 seconds each.
+- *Result:* chance in all 20 restarts (for example, agent A's place 0.256 against chance 0.258).
+- *Meaning:* nothing worked yet. The failure could be in either model or in the aligner;
+  experiments 2-9 find out which.
+
+**2. Do the models hold the world state?**
+- *Why:* alignment can only work if each model's internal state contains the world's state.
+- *How:* probes on each model.
+  - Linear probes (logistic regression) per part of the state, trained on alignment-sample
+    points and tested on held-out points.
+  - An oracle mapping: ridge regression from language states to frames, fitted with true pairs.
+  - Layers 2-4 compared.
+- *Result:* the frame model holds everything perfectly (1.00). The language model holds little:
+  agent places 0.43, objects 0.34-0.43, against guessing the commonest answer at 0.12-0.31. The
+  oracle mapping got 0.4% of frames exactly right. Earlier layers were worse.
+- *Meaning:* even a perfect aligner would fail; the language side doesn't contain the state in a
+  readable form.
+
+**3. Does the language model understand the world at all?**
+- *Why:* weak probes could mean the model hasn't learned the world, or that it has learned it but
+  doesn't store it where a probe can read it.
+- *How:* a behavioural test, in the style of the Othello-GPT legal-move test. Just after a
+  sentence's subject (say "A"), we measured how much next-word probability goes to actions that
+  are actually possible for A right then, over 20,073 held-out event sentences.
+- *Result:* 0.92.
+- *Meaning:* it tracks the world well enough to behave correctly, but doesn't keep a full
+  snapshot anywhere. It looks up what it needs when it needs it.
+
+**4. Train the language model longer and faster** (`lang-v2`).
+- *Why:* the first model stopped at its 10-minute limit while still improving.
+- *How:* the same architecture; learning rate 1e-3 (was 3e-4), warm-up 500 steps, bf16 mixed
+  precision (new `amp` option), 30 minutes / 100,000 steps. Best validation loss 0.407 at step
+  33,000. Two-layer probes, at subjects and pooled over the last 30 positions.
+- *Result:* better behaviour (0.968 on the test in experiment 3). Probes barely improved (pooled:
+  places 0.69, objects 0.59-0.69).
+- *Meaning:* better prediction doesn't by itself make the model store a full snapshot.
+
+**5. A bigger language model** (`lang-m`).
+- *Why:* larger models are known to form more explicit internal pictures of a world (as in
+  Othello-GPT), and the work plan says to scale up if H1 is weak.
+- *How:* 6 layers, width 256, 8 heads, about 4.9M parameters (inside the proposal's range);
+  learning rate 1e-3, warm-up 1,000, bf16, 60 minutes (66,865 steps). Best validation loss 0.406.
+- *Result:* two-layer probes over the last 30 positions: agent places 0.76, objects 0.76-0.84. A
+  map fitted with the truth got 8.6% of frames exactly right, up from 0.4%.
+- *Meaning:* bigger helps, but still falls well short of a full snapshot (technical decision 15).
+
+**6. vec2vec again, on the bigger model.**
+- *Why:* the bigger model holds real signal (experiment 5), so the aligner should now have
+  something to find.
+- *How:* language points pooled over the last 30 positions (new `window` option), 20 restarts.
+- *Result:* still chance (A's place 0.213, against chance 0.251).
+- *Meaning:* the aligner itself is now the suspect.
+
+**7. The easiest possible test of the aligner.**
+- *Why:* to test the aligner on a case where the representations are certainly perfect.
+- *How:* we aligned one pair's frames to another pair's frames. Both describe the same world
+  perfectly, and only the order of the 45 values differs. vec2vec, pilot configuration, raw
+  frames on both sides, 10 restarts.
+- *Result:* chance in all 10 restarts, though the selection scores were low (0.006-0.018): the
+  distributions matched, but the mappings were wrong.
+- *Meaning:* **vec2vec can't work here even with perfect representations.** Many wrong mappings
+  produce exactly the same overall distribution.
+
+**8. Why distribution matching fails.**
+- *Why:* to see which wrong mappings distribution matching settles on, and why.
+- *How:* another distribution-matching method, Gromov-Wasserstein (which matches points by
+  comparing distances within each side), on single frames and on pairs of consecutive frames.
+- *Result:* places mapped by clean but wrong swaps: bush ↔ cave (seed 3, at 0.96-1.00), a 4-way
+  cycle (seed 0). The agents mapped correctly. On pairs of consecutive frames it was muddier.
+- *Meaning:* a single snapshot doesn't show which places are next to each other, so places
+  visited equally often look interchangeable. Only movement over time can tell them apart.
+
+**9. Adding time to distribution matching.**
+- *Why:* if time is what's missing (experiment 8), adding it might fix distribution matching.
+- *How:*
+  - vec2vec with extra discriminators on consecutive pairs of frames, 4 restarts; linear maps
+    were also tried, and did worse.
+  - k-means clusters on each side, then graph matching (FAQ) of the clusters' transition graphs.
+- *Result:* the first gave some signal (B-as-A place 0.59, glass 0.31) but didn't solve it. The
+  second was at chance.
+- *Meaning:* time helps, but adversarial distribution matching is too weak a search, and the two
+  sides' clusters don't correspond.
+
+**10. Judge mappings by dynamics.**
+- *Why:* if movement over time is what identifies the mapping, use it directly as the score.
+- *How:* we translated one pair's frames into the other pair's value order, then asked the other
+  pair's trained frame model how believable the translated episodes are. A wrong mapping makes
+  impossible things happen, such as an agent jumping between places that aren't neighbours.
+  - Judge: pair 0's frame model, scored by its next-frame loss (binary cross-entropy per value)
+    on the mapped episodes.
+  - Search: pairwise swaps of the 45 values, hill-climbing from a random order, judged on 64
+    training episodes; about 20 seconds per restart, 3 restarts.
+  - A gradient search over soft permutations (Sinkhorn) only reached 0.45-0.51; random orders
+    score 0.68-0.80.
+- *Result:* the best restart (judge 0.1180) found the exact mapping, apart from the agent swap.
+  The true and agent-swapped orders scored exactly the same (0.1156).
+- *Meaning:* **the first method to pass any test.** Dynamics identify the mapping up to, and only
+  up to, the world's symmetry, which is the proposal's own claim.
+
+**11. The dynamics judge, language to frames.**
+- *Why:* to apply the method that worked in experiment 10 to the real task.
+- *How:* a small neural network (MLP) from `lang-m` pooled points to 45 soft frame values. Loss:
+  the judge's loss on the mapped episodes (first 61 points, the frame model's context), plus 10 ×
+  MMD (a penalty that pulls the mapped frames' distribution towards real frames). 3 restarts,
+  1,500 steps.
+- *Result:* chance; judge loss 0.164-0.178.
+- *Meaning:* either the judge is wrong for language, or the search can't find the answer;
+  experiments 12-14 check which.
+
+### Session 2
+
+**12. Is the judge right for language too?**
+- *Why:* to separate "the scoring is wrong" from "the search fails".
+- *How:* 300 held-out language episodes, mapped to frames using the truth, then scored by the
+  judge. Variants used every sentence end, or event sentences only.
+- *Result:* true mapping 0.105 (event sentences only: 0.116). Every single wrong swap scored
+  worse (places 0.118-0.136, objects 0.157-0.274); only the agent swap tied.
+- *Meaning:* the scoring is right; finding a mapping that scores well is the problem.
+
+**13. The cipher control.**
+- *Why:* the proposal's upper-bound control: language aligned to a renamed copy of language,
+  which should be the easiest real alignment.
+- *How:* pair 1's language with its words renamed into pair 0's word numbers, judged by pair 0's
+  language model; a pairwise-swap search over the renaming.
+- *Result:* true renaming 0.4088, agents swapped 0.4089 (a tie). The swap search from random
+  starts stuck at 4.7-5.6 (4-21% of words right). Matching words by frequency rank alone got all
+  24 right.
+- *Meaning:* with only 24 words, frequency alone solves this control, so it doesn't test the search.
+
+**14. Why the neural mapping failed.**
+- *Why:* to find out whether a faithful mapping even scores well under the judge.
+- *How:* MLP mappings fitted with true frames (binary cross-entropy 0.162), then scored by the judge.
+- *Result:* the faithful mapping scored 0.25-0.32 with the judge, *worse* than the unfaithful
+  ones from experiment 11 (0.16-0.18), and got only 5% of frames exactly right.
+- *Meaning:* a flexible mapping can **invent** believable frame sequences that ignore what the
+  language says, and the judge then prefers the invention. The language model was also still too
+  weak.
+
+**15. Make the language model hold a full snapshot** (`lang-s48`).
+- *Why:* the language model was the bottleneck (experiments 2, 5, 14), and it needs to hold the
+  whole state at each sentence end, as each frame does.
+- *How:* a predictive-state objective. At each sentence end, a 64-number summary must predict the
+  next 48 words on its own, through a small 2-layer decoder. To do that it has to record where
+  everything is. Training still uses only the language stream.
+  - Fine-tuned from `lang-m` for 25 minutes (18,488 steps), with both losses: next word, plus the
+    future words from the summary.
+  - Next-word loss 0.403 (`lang-m`: 0.406); future loss through the summary 0.42-0.43 per word.
+- *Result:* two-layer probes on held-out data: agent places 0.971, hunger 0.967, stone 0.970,
+  apple 0.971, glass 0.775. A map fitted with the truth now got **68%** of frames exactly right.
+- *Meaning:* the language side is no longer the bottleneck (technical decision 17).
+
+**16. The judge again, with the new language model.**
+- *Why:* with the bottleneck removed, to see whether the judge-based search now works.
+- *How:*
+  - 1,500 training episodes and 300 held-out.
+  - Frame-side groups of values found from frame data alone: sizes 4, 4, 7, 10, 6.
+  - MLP map trained against the judge, plus a round trip back to the summary, plus MMD.
+  - Variations: hard 0/1 frames (straight-through), swap moves on the outputs, staged training.
+  - Basin test: start from the truth, or from the truth with two objects swapped, then train.
+- *Result:* chance; at best one agent's place in 2 of 8 restarts. In the basin test, MLP maps
+  ended equal (0.153 against 0.154), while linear maps kept the gap (0.153 against 0.220). Linear
+  maps from random starts stuck at judge 0.45.
+- *Meaning:* flexible mappings cheat; constrained ones can't be found by gradual adjustment.
+
+**17. Match the slowest-changing patterns on each side.**
+- *Why:* a search-free alternative: slow features describe the world's lasting state, and might
+  line up across the two sides.
+- *How:* time-lagged component analysis on each side, with components matched by how slowly
+  they change.
+- *Result:* only the slowest component matched (correlation 0.66). The frame side has many
+  components that change almost equally slowly (0.979-0.981), so they can't be told apart.
+- *Meaning:* ordering by slowness doesn't identify the mapping in this world.
+
+**18. A compressed summary in the frame's own format, then a swap search.**
+- *Why:* the swap search worked when both sides shared a format (experiment 10), so make the
+  language side's summary take the frame's format.
+- *How:*
+  - On the frozen `lang-s48`: a discrete code with one-of-n groups of sizes 4, 4, 7, 10, 6 plus
+    4 yes/no values (Gumbel straight-through), trained only to predict the next 48 words.
+  - 20 minutes; future loss 0.444.
+  - Then the permutation search from experiment 10.
+  - Variations: a penalty on how many groups change between sentences (weights 0.2, 0.02, and
+    0.01 with a warm-up), and the judge added to training (weight 1 or 0.1, after 40% of steps).
+- *Result:*
+  - Groups only partly matched entities: hunger 0.90, agent places 0.54-0.72, objects 0.37-0.40.
+  - The penalty either collapsed the code to a constant or left it entangled.
+  - With the judge at weight 1, the code **froze**: judge 0.09, *below* the truth's 0.105, while
+    its future loss worsened from 0.45 to 0.58.
+- *Meaning:* a second way to cheat the judge: things that never change look very predictable.
+
+**19. What raw counts reveal.**
+- *Why:* to see how much of the matching simple statistics give away, which matters for the
+  counting baseline.
+- *How:* per stream, word counts, frame-value changes and agent arrivals at each place; the
+  truth used only to label the table.
+- *Result:* objects rank the same on both sides (stone > apple > glass), so counts alone match
+  them. Places match only up to the mirror: river 270,281 words / 153,774 arrivals against hill
+  271,633 / 155,263; bush 524,436 / 314,239 against cave 446,714 / 313,825.
+- *Meaning:* **for the proposal:** in this world a good counting method would get much of the
+  matching right, which weakens the planned comparison against a counting baseline.
+
+**20. The predictive-state language model, from scratch** (`lang-ps`).
+- *Why:* experiment 15 fine-tuned an existing model; the result needs to reproduce from scratch,
+  inside the package.
+- *How:* the head built into the package (`future: 48`, `summary: 64`, `future_layers: 2` in
+  `configs/pilot-lang.yaml`); 60 minutes, 38,405 steps; best validation loss 0.826 (next word plus
+  future) at step 34,000.
+- *Result:* probes: summary 0.97 for agent places, hunger, stone and apple, glass 0.77; last-layer
+  hidden state, glass 0.93.
+- *Meaning:* experiment 15 reproduces from scratch.
+
+### Session 3: decipherment
+
+From here on the direction changes. Instead of mapping language onto frames (which can cheat by
+inventing or freezing), we treat the language as a code describing a hidden sequence of frames,
+and ask which frame sequence best explains every word. This is how ciphers and lost scripts have
+been deciphered automatically.
+
+**21. Decipherment, first version** (`hmm.py`).
+- *Why:* a fit that has to explain every word can't ignore its input (no invention), and a frame
+  that never changes can't explain changing sentences (no freezing).
+- *How:*
+  - A hidden Markov model whose hidden states are frames: the 49,272 distinct frames in the frame
+    stream's training episodes, with transition probabilities from 389,545 observed transitions.
+  - Each sentence either stays on the current frame or takes one step.
+  - Emission (in the style of IBM Model 1): each word comes from background word frequencies,
+    from one of the frame's "on" values, or from a value the step changed.
+  - Fitted by stochastic EM: forward filtering, sampling one path back, re-estimating the tables.
+    512 language episodes, 20 iterations, 4 restarts.
+- *Result:*
+  - A bug first: a smoothing term wasn't multiplied by the emission, so a frequencies-only model
+    scored -5.69 against its true -11.8. Fixed.
+  - Then the fit preferred wrong answers: random starts reached -10.6 to -10.8, better than tables
+    fitted with the true paths (-10.91). EM pushed the stay probability from 0.23 to about 0.05,
+    using the extra steps to model grammar.
+- *Meaning:* before searching, check that the truth scores best. Here it didn't.
+
+**22. Decipherment with per-position word tables.**
+- *Why:* to stop the hidden frames being used to model grammar (experiment 21).
+- *How:*
+  - A separate table for each of the 6 word positions in a sentence, so grammar is carried by
+    the tables.
+  - Stay probability fixed at 0.230 = 1 - (40.9 - 1) / (52.8 - 1), from the mean frames per
+    episode and sentences per episode of the two streams (no pairing).
+  - 4 restarts, 25 iterations, 512 episodes.
+- *Result:* tables fitted with the truth: -4.24, with 22% of frames exactly right when decoding.
+  EM from random starts: -3.86 to -3.94, all at chance.
+- *Meaning:* random starts still beat the truth; experiment 23 tests whether that's the model or
+  the search.
+
+**23. Start EM from the truth (a basin test).**
+- *Why:* if EM started at the truth drifts away, the model is wrong; if it stays and scores
+  better than random starts, the search is the problem.
+- *How:* tables fitted with the true paths as the starting point, then 16 ordinary EM iterations.
+- *Result:* it stayed near the truth and improved to -3.60, better than any random start. State
+  parts read at 0.76-0.88, with 25% of frames exactly right.
+- *Meaning:* **the fit now prefers the truth.** The problem is that EM from a random start gets
+  stuck.
+
+**24. A small starting hint: who is speaking.**
+- *Why:* a better starting point might steer EM into the right answer.
+- *How:*
+  - From the frames alone: the two values that switch on at 25.6% of steps (each agent's "acted"
+    flag).
+  - From the language alone: the two commonest sentence-initial words.
+  - Each of the 2 pairings seeded at the subject position (0.9 probability), then 25 iterations.
+- *Result:* chance (-3.82, -3.92). The hint washed out within a few iterations.
+- *Meaning:* a hint about one part of the model isn't enough; the rest of the tables pull it back.
+
+**25. Find each stream's structure on its own** (`entity.py`).
+- *Why:* knowing which words are agents, objects and places, and which frame values belong to
+  which thing, reduces the search to 144 possible matchings.
+- *How:*
+  - Frames: values are grouped into one-of-n blocks if they hand over to each other between
+    frames and are never on together.
+  - An agent block is one whose values can all appear at an episode's start, and whose every
+    change comes with one "acted" flag (more than 99% of the time).
+  - Hunger is assigned through the acted flag that comes with it.
+  - Object values: "at" values are those on at episode starts; "held" values switch on from an
+    "at" value along with one acted flag; the rest are "broken at a place" if the acting agent's
+    place is consistent (more than 90%), otherwise "gone".
+  - Places are lined up across blocks through take events.
+  - Language: the agents are the two commonest sentence-initial words; verbs are words whose
+    suffix is followed by a sentence end more than half the time; places take two or more
+    different suffixes; objects are the rest.
+  - Then: seeding tables for all 144 matchings (half background frequencies, half the matched
+    words), ranking them by likelihood on 128 episodes (495 seconds), and EM from the top three.
+- *Result:* the structure was exactly right on both sides: all 35 live frame values, and
+  2 agents, 3 objects, 4 places and 8 verbs. But the seeded ranking put the true matching 4th,
+  with all 144 within 0.004, and EM from the top three ended at -5.3 to -5.4, chance.
+- *Meaning:* each stream's structure can be found on its own; seeds that only nudge free tables
+  are too weak to rank by.
+
+**26. Shared tables: build the matching into the model.**
+- *Why:* with free tables, a wrong matching can be patched up; tying the tables to the matching
+  should stop that.
+- *How:*
+  - Each emission feature (a value that is on, turned on, turned off, or "nothing changed") has a
+    kind, such as "agent place, turned on".
+  - All features of a kind share one table over role classes: this agent, another agent, this
+    object, another object, this place, another place, or one specific non-entity word.
+  - The M-step pools counts into role classes, then expands them back into words through the
+    matching.
+  - Starting hint, with no truth: pseudo-counts of 20 on each value's own entity words.
+- *Result:* with random role tables even the true matching failed. With the hint, the true
+  matching read the state above chance for the first time (15 iterations on 256 episodes: agent
+  places 0.64, objects 0.57-0.62). Long fits (30 iterations on 512 episodes) ranked the true
+  matching first: true -3.939, two objects swapped -3.953, objects cycled -4.011.
+- *Meaning:* shared tables make the fit prefer the right matching.
+
+**27. Search all matchings without the truth.**
+- *Why:* to see whether the fit picks the true matching when nothing gives it away.
+- *How:*
+  - Stage 1: all 24 place orders, short fits (15 iterations, 256 episodes), each scored on 192
+    selection episodes used for neither fitting nor scoring.
+  - Then true against mirror: 3 restarts each, 30 iterations on 512 episodes.
+- *Result:* stage 1 picked the **mirror** (-4.134 against the truth's -4.172). In the restart
+  test the mirror won every time (mean -3.926 against -3.938; noise about 0.003-0.007).
+- *Meaning:* the model couldn't see the one clue that breaks the mirror, which is that eating
+  happens at the bush.
+
+**28. Use the language model's summaries instead of words** (`zhmm.py`).
+- *Why:* the summaries hold the state at 0.97 (experiment 20), and using them is H2 as the
+  proposal means it: aligning the language model's representation, not raw words.
+- *How:*
+  - The 64-number `lang-ps` summaries at sentence ends, standardised.
+  - Emission: a Gaussian, z ~ N(W f + b, Σ), where f is the frame's values; full covariance,
+    fitted by ridge regression on sampled paths.
+  - Ceiling: W fitted with the true paths.
+  - Then started from the word model's paths, under the true or mirror matching, for 12 EM
+    iterations on summaries alone.
+- *Result:* ceiling 35.8% of frames exactly right. From the true start: agent places 0.98, stone
+  and apple 1.00, glass 0.65, hunger 0.69-0.75, 32% exact. But the mirror start fitted better on
+  this model's scale (117.9 against 116.3) and stayed mirrored.
+- *Meaning:* hunger was read poorly, and hunger is what breaks the mirror.
+
+**29. A neural reader inside the decipherment.**
+- *Why:* a straight-line reading of the summary reads hunger poorly, while the probes read it at
+  0.97, so a nonlinear reader might help.
+- *How:* a hybrid of a neural network and a hidden Markov model, as in speech recognition. An MLP
+  (64 → 256 → 256 → a softmax per block and a sigmoid per single value) was trained for 3 epochs
+  per iteration on the sampled paths. Its outputs, divided by each value's frequency in the frame
+  stream, were the evidence, softened by a power of 0.5.
+- *Result:* worse. It drifted (agent places 0.63 → 0.51 over 12 iterations), with hunger staying
+  at about 0.68.
+- *Meaning:* a reader trained on its own guesses learns its own mistakes. Dropped.
+
+**30. One more role: "where the actor is".**
+- *Why:* in "A eats at the bush", nothing linked the word "bush" to where A was standing, so
+  getting the place wrong cost nothing.
+- *How:* a fourth mixture component in the emission. It puts all its weight on the word for the
+  place where the acting agent is in the step's new frame (read from the acted flag and that
+  agent's place block), translated by the matching. It needs no verb meanings. Its weight is
+  learned per position. 30 iterations on 512 episodes, 2 restarts per order.
+- *Result:* the true order won by 0.072 (-3.935 and -3.933, against -4.007 and -4.006), more than
+  ten times the noise. Agent places rose to 0.85.
+- *Meaning:* **the mirror was broken.** A confusion along the near-symmetry came from the
+  aligner being too coarse, not from the world.
+
+### Session 3 continued: two trained models
+
+Experiments 21-30 took their sense of how frames follow one another from a table of the frame
+data, not from the trained frame model. The proposal needs two trained models, one per stream,
+so from here on the frame side is the trained frame model.
+
+**31. A frame model that predicts whole frames** (technical decision 18).
+- *Why:* the old model predicted each of the 45 values separately, so it couldn't express "if A
+  acted, then A's place changed, not B's", and its samples could be impossible frames. An aligner
+  that uses the model needs whole, valid frames.
+- *How:*
+  - A masked output head (after MADE): 2 hidden layers of 256 units, conditioned on the
+    transformer's context. It predicts the values one after another, each given the earlier ones.
+  - Options `joint` and `joint_hidden`, with 4 new tests.
+  - Trained on frames alone, from scratch: 20,000 steps in 6 minutes, 968k parameters, saved to
+    `models/obs-joint`.
+- *Result:* held-out loss 0.047 per value (old model 0.116), still improving at the last step.
+  99.6% of 8,030 sampled next frames, from 200 held-out episodes, are frames the stream actually
+  shows.
+- *Meaning:* the trained frame model has learned the world's structure without being told it, and
+  can stand in for the table.
+
+**32. Decipherment with a particle filter** (`smc.py`).
+- *Why:* a trained model predicts from the whole history, so the table-based method no longer
+  applies.
+- *How:*
+  - 32 particles per episode. At each sentence a particle either stays (probability 0.23) or
+    moves to one of 4 candidate frames sampled from the joint head. Particles are weighted by the
+    sentence's emission and resampled within each episode.
+  - Start frames: a uniform prior over the 6,720 combinations of one value per block, with the
+    single values off.
+  - The shared tables and actor-place role from experiments 26 and 30. The M-step uses one
+    particle's path per episode.
+  - 15 iterations on 512 episodes, about 90 seconds per iteration.
+- *Result:* agent places 0.47 (chance about 0.33), objects close to chance, still improving
+  steeply. True -4.2991, mirror -4.3047: smaller than the likely noise.
+- *Meaning:* it works, but learns much more slowly than the table version, because each history
+  is a sample rather than an exact sum over every frame.
+
+**33. Add the language model's summaries to the particle filter.**
+- *Why:* the summaries carried most of the accuracy in experiment 28.
+- *How:* the Gaussian from experiment 28, refitted every iteration from the sampled paths,
+  switched on from iteration 5.
+- *Result:*
+  - At full strength it swamped the words, the tables drifted, and the run crashed on NaN weights
+    at iteration 12.
+  - Softened by a power of 0.2, with the M-step using 8 particle paths per episode and guards
+    against NaN weights, 25 iterations: agent places 0.96-0.97, hunger 0.95. Objects rose to
+    about 0.5 by iteration 10, then fell back to 0.28-0.36.
+- *Meaning:* agents and hunger are solved with two trained models; objects aren't.
+
+**34. Fix the objects: handle the episode's start exactly.**
+- *Why:* objects rarely move, so their positions come from the opening sentences. But each
+  particle chose its start frame from the first sentence only, so often no particle had the right
+  objects.
+- *How:* until a particle first moves, each episode keeps an exact distribution over all 6,720
+  start frames, updated by every sentence (Rao-Blackwellising the start). A particle draws its
+  start from it at its first move, and its earlier sentences are filled in with that start.
+  25 iterations on 512 episodes.
+- *Result:*
+
+  | | Best point (iteration 10, 128 held-out episodes) | End (iteration 25, all 300 held-out) |
+  |---|---|---|
+  | Frames exactly right | **60.8%** | 54.2% (agents swapped: 5.1%) |
+  | Agent places | 0.98-0.99 | 0.97-0.98 |
+  | Hunger | 0.87-0.89 | 0.96-0.97 |
+  | Glass / stone / apple | 0.87 / 0.97 / 0.97 | 0.83 / 0.87 / 0.91 |
+
+- *Meaning:* the breakthrough, close to the 68% ceiling of experiment 15, from language alone
+  with two trained models. But accuracy slid after its peak while the fit kept improving. The
+  mixture weights drifted towards the "something changed" component (0.99 at the subject
+  position).
+
+**35. Stop the slide; compare true and mirror.**
+- *Why:* to stop the drift seen in experiment 34, and to check that the fit prefers the true
+  order with two trained models.
+- *How:* mixture weights frozen after iteration 8 (`lamfreeze=8`); 20 iterations; identical
+  settings for the true and mirror orders.
+- *Result:* true order **58.4%** of frames exactly right (peak 64.7% at iteration 15), fit
+  -8.3516. Mirror 0%, fit -8.4114. A check on 128 episodes had pointed the other way (-8.33
+  against -8.47).
+- *Meaning:* with two trained models, the fit prefers the truth on all 300 held-out episodes; 128
+  episodes are too few to select by.
+
+**36. Speed.**
+- *Why:* each run took 35-90 minutes, too slow to search many matchings.
+- *How:*
+  - Start-frame emissions precomputed once per iteration as a table, not per episode in Python.
+  - The joint head's context projections computed once, not on each of its 45 passes.
+  - The frame model run only up to the longest history.
+  - Decoding on the GPU, with frames packed into integers.
+  - Two jobs run side by side as a throughput test.
+- *Result:* each piece was 2-600 times faster on its own, but the whole loop only 1.6-2.2 times
+  (6-9 seconds per iteration on 64 episodes, against 13). Two jobs at once stalled almost
+  completely: neither finished its first iteration in 10 minutes, against 23 seconds alone.
+- *Meaning:* faster code alone won't make a full search affordable, and the GPU can't be shared,
+  so the search itself has to be designed to be cheap.
+
+**37. A faster search: one fit, then relabel words to score every matching.**
+- *Why:* the shared role tables don't depend on the matching, so one fit might be able to score
+  every matching cheaply.
+- *How:*
+  - Starting matching from counts alone: objects by word count against frame changes; places by
+    word count against agent arrivals.
+  - Fit (12 iterations, 512 episodes). Then for each candidate, pool the role tables from the
+    fit's counts and expand them under the candidate's words.
+  - Score each candidate with one filter pass on 128 selection episodes, with the same random
+    seed for all; about 15 seconds each.
+  - Refit under the winner and repeat. Also run from deliberately wrong starts (the mirror, and
+    a scrambled matching).
+- *Result:*
+  - The starting matching from counts was **exactly the true matching**.
+  - From it, the search kept the truth by wide margins (places -8.24 against -8.53; objects
+    -8.24 against -8.88). Under it: agent places 0.98, hunger 0.97, stone 0.94, apple 0.95,
+    glass 0.54; 41.5% of frames exactly right.
+  - **Started from the mirror or a scrambled matching, it kept those too.**
+  - Comparing the three separate fits ranked them correctly: true -8.24, mirror -8.37,
+    scrambled -8.50.
+- *Meaning:* a fit's paths and summary evidence lean towards the matching it was fitted under, so
+  relabelling only confirms that matching. Fitting each candidate separately works. **For the
+  proposal:** in this world, raw counts find the matching on their own.
+
+**38. Relabel with words only.**
+- *Why:* the summary evidence ties scores to the fitted matching, so scoring with words alone
+  might remove that lean.
+- *How:* as in experiment 37, but scoring without the summary evidence, so each candidate's paths
+  are inferred afresh from its own words. Started from the mirror.
+- *Result:* the top five scores fell within 0.007, and the true order came 5th. Stopped early.
+- *Meaning:* role tables fitted under a wrong matching carry too little information for words
+  alone to rank alternatives.
+
+**39. Two-stage search.**
+- *Why:* separate fits rank matchings correctly (experiment 37), but fitting all 144 would take
+  about 36 hours, so cut the field cheaply first.
+- *How:*
+  - Shortlist: all 144 matchings ranked by how far apart the two streams' frequency profiles are
+    under each one. That is the sum of squared differences in log shares: object word counts
+    against object change counts, and place word counts against agent arrivals.
+  - Keep the top 6.
+  - Fit each finalist separately (12 iterations, 512 episodes) and pick the one with the best
+    score for its own matching on the 128 selection episodes, with the same random seed for all.
+- *Result:*
+  - Shortlist: the true matching ranks 1st. But the top four (the truth, two half-mirrors and the
+    full mirror) are tied on counts to the fourth decimal place (0.1762-0.1764), so the separate
+    fits must tell them apart.
+  - Finalist 0 (the true matching): own score -8.2949. Truth check: **75.3% of frames exactly
+    right** (agents swapped 6.6%); agent places 0.98, hunger 0.96-0.97, glass 0.92, stone 0.96,
+    apple 0.96. That is above the 68% ceiling of experiment 15.
+  - All six finalists, scored on their own matching (higher is better), with a truth check:
+
+    | Finalist | Own score | Frames exactly right |
+    |---|---|---|
+    | 0: true | -8.2949 | **75.3%** |
+    | 1: bush ↔ cave | -8.3298 | 2.2% |
+    | 2: river ↔ hill | **-8.2169** | 0.4% |
+    | 3: full mirror | -8.5027 | 0% |
+    | 4: stone ↔ apple | -8.4188 | 7.9% |
+    | 5: stone ↔ apple and bush ↔ cave | -8.5096 | 0.8% |
+
+  - The search selected finalist 2, which is wrong.
+- *Meaning:* given the right matching, two trained models decode 75% of whole frames exactly
+  right. But selecting by each fit's own score failed: a wrong matching (river ↔ hill) scored
+  best while reading almost nothing correctly. Experiment 40 finds out why.
+
+**40. Rescore the finalists with corrected scoring.**
+- *Why:* the score for the summary evidence was a Gaussian (bell-curve) density, and the code had
+  left out its width penalty: the term -0.5 log det(Σ), where Σ is the fitted noise spread. That
+  term is a constant within one fit, so it didn't matter while fitting. But it matters when
+  different fits are compared. A wrong matching explains the summaries badly, so its fitted
+  spread is wide, and without the penalty a wide spread makes everything look close. So worse
+  fits scored better.
+- *How:*
+  - Added the term to the Gaussian's score (`Gauss.set_norm` in `smc.py`), including the
+    start-frame scoring.
+  - Rescored the six saved finalist fits from experiment 39, with no refitting, on the same 128
+    selection episodes, with 2 random seeds each.
+  - Two scores per finalist: the corrected full score (words plus summaries), and words only.
+  - About 37 seconds per scoring pass.
+- *Result:* (means of the 2 seeds; higher is better; seed-to-seed noise about 0.1 for the full
+  score and about 0.01 for words only)
+
+  | Finalist | Corrected full score | Words only | Frames exactly right (truth check) |
+  |---|---|---|---|
+  | **0: true** | **18.23** | **-5.028** | **75.3%** |
+  | 4: stone ↔ apple | 17.60 | -5.048 | 7.9% |
+  | 3: full mirror | 17.40 | -5.048 | 0% |
+  | 2: river ↔ hill | 16.42 | -5.055 | 0.4% |
+  | 1: bush ↔ cave | 16.31 | -5.110 | 2.2% |
+  | 5: stone ↔ apple and bush ↔ cave | 16.05 | -5.158 | 0.8% |
+
+- *Meaning:*
+  - **With the corrected score, the whole pipeline selects the true matching without using the
+    truth**, by a margin of 0.63 over the next best, about six times the seed noise. The closest
+    rivals are those with fewer things wrong.
+  - Words alone also rank the truth first, but only by about 0.02 over the mirror and the object
+    swap, which is close to the noise. **The language model's summaries are what make the
+    selection confident.**
+  - Caveat: the scoring was corrected *after* it picked a wrong answer on this pair. The fix is a
+    missing term in a standard formula, not a tuned choice. But the method has to be frozen and
+    confirmed on a fresh pair, ideally one where raw counts don't already rank the truth first,
+    before this result counts.
+
+### Session 4: packaging and the fresh pair
+
+**41. Move the method into the package and freeze it.**
+- *Why:* to confirm the result on a fresh pair, the method has to be fixed in advance and run from
+  tested code, not from scratch scripts.
+- *How:*
+  - `grounding/align/structure.py` finds each stream's structure. It is generalised so it no
+    longer assumes two agents: the "acted" flags are found as the set of single values of which
+    exactly one is on after every step. On pair 0 it reads all 35 live values correctly.
+  - `grounding/align/decipher.py`: the particle filter, shared tables, fitting and the two-stage
+    search.
+  - Scoring: `grounding.analysis.score --kind decipher`, behind the pre-registration firewall,
+    using a new frame-to-state decoder in the renderer.
+  - Settings frozen in `configs/pilot-decipher.yaml`; recorded as technical decision 19.
+  - 7 new tests on a tiny world, CPU only; 146 tests pass in all.
+- *Result:* the tests found one flaw carried over from the scratch code. Smoothing was added to
+  role classes that have no words for a kind of feature, so the tables summed to slightly less
+  than 1 (0.9987 in the tiny test). Fixed, so every table is an exact distribution.
+- *Meaning:* the package version is the scratch method with that fix, and with its own seeded
+  sample of episodes. Pair 1 is its first real test.
+
+**42. Pair 1, first run: the objects fail. Why, and a fix.**
+- *Why:* pair 1 is a fresh corpus pair with its own two trained models (language model held-out
+  loss 0.825, frame model 0.047, both about the same as pair 0's). It was the first test of the
+  frozen method.
+- *How:*
+  - Ran the frozen pipeline (`python -m grounding.align.decipher runs/pilot/pair-001`).
+  - Stopped it after the first finalist and checked it against the truth, because its numbers
+    looked wrong.
+  - Then four diagnostics, each using the truth, to find the cause:
+    1. The packaged code on pair 0 with the true matching, at small scale (128 episodes,
+       8 iterations).
+    2. The same at full scale (512 episodes, 12 iterations), to separate a bug in the packaged
+       code from a problem with pair 1.
+    3. Pair 1's count shortlist against the true matching.
+    4. *Probes* (small classifiers trained to read a fact out of the language model's summaries)
+       on both pairs, in two forms: a two-layer probe ("is the fact there at all?") and a linear,
+       straight-line probe ("can a straight-line read-out reach it?").
+- *Result:*
+  - First finalist on pair 1: agent places 0.97-0.98 and hunger 0.95-0.96, but objects only
+    0.43-0.47, even on the opening sentences, where they are easiest.
+  - Diagnostic 1: objects poor on pair 0 too (stone 0.45, apple 0.54), but this scale had never
+    been enough on pair 0 either.
+  - Diagnostic 2: **the packaged code is fine.** On pair 0 at full scale it decodes **78.7% of
+    frames exactly right** (the scratch code: 75.3%), objects 0.95-0.98. Its fit tracks the
+    scratch code's within 0.01 per sentence.
+  - Diagnostic 3: on pair 1 the raw counts ranked the true matching first, and that was the
+    finalist fitted. So the objects failed with every word correctly assigned.
+  - Diagnostic 4:
+
+    | Object location | Pair 0: two-layer / linear probe | Pair 1: two-layer / linear probe |
+    |---|---|---|
+    | Glass | 0.77 / 0.75 | 0.78 / **0.43** |
+    | Stone | 0.97 / 0.95 | 0.97 / **0.48** |
+    | Apple | 0.97 / 0.97 | 0.97 / **0.63** |
+
+    Agent places and hunger read out at 0.97 both ways on both pairs.
+- *Meaning:*
+  - Both language models know where the objects are. But pair 1's stores it in a tangled form:
+    where an object is can only be read in combination with other facts, such as where the
+    agents are. The aligner modelled each summary as a straight-line function of the frame's
+    single values, so on pair 1 it couldn't use the summaries for objects at all, and the words
+    alone weren't enough. Pair 0 worked because its language model happened to store objects in
+    a straight-line form. **The method had a hidden assumption that held on pair 0 by chance.**
+  - The fix keeps the same kind of model but gives it richer inputs: the frame's values *and the
+    product of every pair of them* (for example "the stone is at the river" × "A is at the
+    river"). That is 35 live values plus 595 products. It uses only the frame's own structure,
+    nothing from the truth.
+  - Checked offline before any GPU run, by fitting the summary model on true frames and asking
+    which position of each object the summary points to:
+
+    | Object (layout order) | Pair 1: linear / with products | Pair 0: linear / with products |
+    |---|---|---|
+    | Object 0 | 0.44 / **0.71** | 0.96 / 0.97 |
+    | Object 1 | 0.54 / **0.96** | 0.74 / 0.76 |
+    | Object 2 | 0.65 / **0.95** | 0.97 / 0.97 |
+
+    It repairs pair 1 and costs pair 0 nothing.
+  - Code: `summary_features: pairs` in `configs/pilot-decipher.yaml`; `Gauss` in
+    `grounding/align/decipher.py` builds the products and fits in chunks to bound memory; one
+    new test. **Caveat:** this change was made *after* seeing pair 1 fail, so pair 1 is no longer
+    a clean confirmation. A third pair, run with the method as it now stands, is needed for that.
+
+**43. The pairwise fix in the real loop, and words alone.**
+- *Why:* entry 42's offline check fitted the summary model to the *true* frames. In the real
+  method it is fitted to the particle filter's own guesses, which start out wrong. Separately,
+  the purity question: how much do the raw words do without the language model?
+- *How:*
+  - The frozen pipeline on pair 1 with `summary_features: pairs`, checked against the truth after
+    its first finalist (the true matching); the run was then stopped.
+  - The true matching on pair 1 with the summaries switched off: trained frame model plus raw
+    words only, no language model (512 episodes, 12 iterations).
+- *Result:*
+  - With pairwise features, objects got **worse**: glass 0.38-0.41, stone 0.24-0.27, apple
+    0.39-0.41. Hunger fell from 0.95 to 0.78-0.84. Agent places held at 0.97-0.98.
+  - Words only: agent places 0.42-0.46, hunger 0.62, objects 0.18-0.28, 0.1% of frames exactly
+    right. That is near chance throughout.
+- *Meaning:*
+  - The richer summary model is flexible enough to fit the filter's wrong early guesses well, so
+    it confirms them instead of correcting them. A summary model fitted to its own decoding needs
+    to be simple enough that the truth fits it better than a wrong guess does. Pairwise features
+    are dropped from the method.
+  - **For purity, a good sign:** with the current word model the raw words achieve almost
+    nothing alone. On pair 0, the language model's summaries were doing the work, agents
+    included. The words are needed to start the process, and the summaries finish it.
+  - That points the fix at the word side. The word model explains each word separately, each
+    from any fact in the frame, so nothing ties "stone" and "river" in "the stone is at the
+    river" to the same fact: a frame with the stone elsewhere and an agent at the river explains
+    the words almost as well. Real sentences state one fact or one change each, so entry 44 tests
+    a word model in which every word of a sentence comes from a single fact.
+
+**44. A word model where each sentence states one fact.**
+- *Why:* entry 43 found that the word model can't tie a sentence's words to the same fact. Real
+  sentences state one fact or one change each, for example "stone cave *be*" (the stone is at the
+  cave), "A hill *go*" (A goes to the hill), "A stone *take*" (A takes the stone).
+- *How:*
+  - New option `emission: sentence` (`SentenceFit` in `grounding/align/decipher.py`). A sentence
+    first picks one *focus*: one value that is on in the frame, or, after a step, one change.
+    Every word of the sentence then comes from that focus's table, from the background
+    (word frequencies), or from the acting agent's place.
+
+        P(sentence) = sum over foci f of  pi(f) × product over positions j of
+                      [mu0 × background_j(word) + mu1 × table_j(word | f) + mua × (word = actor's place)]
+
+  - It uses the same shared role tables as before ("this object", "this place", and so on), so
+    the matching still turns roles into words, and the same particle filter, start handling and
+    summaries. EM now also learns which focus each sentence had.
+  - Two new tests: the fast start-frame odds must equal the general formula for both word
+    models.
+  - Pair 1, true matching, straight-line summaries, 512 episodes, 12 iterations (it uses the
+    truth only to score).
+- *Result:*
+
+  | Pair 1, true matching | Old word model (entry 42) | One fact per sentence |
+  |---|---|---|
+  | Frames exactly right | 0.5% | **43.0%** |
+  | Agent places | 0.97-0.98 | 0.97-0.99 |
+  | Hunger | 0.95-0.96 | 0.96-0.97 |
+  | Glass / stone / apple | 0.43-0.47 | **0.67 / 0.86 / 0.78** |
+  | Fit at iteration 4 (words only so far) | -5.560 | -5.041 |
+
+- *Meaning:* tying each sentence to one fact makes the words far more informative, and objects
+  are now mostly right on a pair where the summaries can't see them in a straight line. Objects
+  are still short of pair 0's 0.95. Next: check that this doesn't break pair 0, and how much of
+  it is words alone (entry 45).
+
+**45. The new word model: pair 0, and words alone.**
+- *Why:* to check that the change in entry 44 doesn't break pair 0, and to measure how much of
+  it comes from the words alone, with no language model (a purity check: the proposal needs the
+  trained language model to do the work).
+- *How:* both with the true matching, 512 episodes, 12 iterations:
+  - pair 0 with `emission: sentence` and straight-line summaries;
+  - pair 1 with `emission: sentence` and the summaries switched off, so the only language input
+    is the raw words.
+
+  From here on, GPU jobs run through an unattended queue (`runs/queue/`) that doesn't depend on
+  the Claude session, after a dropped connection lost a night of work.
+- *Result:*
+
+  | | Frames exactly right | Agent places | Hunger | Glass / stone / apple |
+  |---|---|---|---|---|
+  | Pair 0, old word model (entry 42) | 78.7% | 0.97-0.98 | 0.96-0.97 | 0.95 / 0.96 / 0.98 |
+  | Pair 0, one fact per sentence | 74.2% | 0.97-0.98 | 0.97 | 0.91 / 0.98 / 0.94 |
+  | Pair 1, one fact per sentence | 43.0% | 0.97-0.99 | 0.96-0.97 | 0.67 / 0.86 / 0.78 |
+  | Pair 1, one fact per sentence, **words only** | **0.2%** | 0.49-0.50 | 0.69-0.73 | 0.35 / 0.39 / 0.37 |
+
+  These checks decode 64 held-out episodes, so differences of a few points are within noise.
+- *Meaning:*
+  - On pair 0 the new word model is about as good as the old one, and on pair 1 it is far
+    better, so it replaces the old one.
+  - **Without the language model, alignment fails even with the better word model.** The words
+    alone explain the sentences well (fit -3.77 per sentence) but can't pin down which frame they
+    describe. The language model's summaries are what make alignment work. Together with
+    entry 43, this is the first direct evidence that the trained language model, not raw word
+    statistics, carries the alignment.
+
+**46. Rules fixed in advance for the next runs** (written before any of their results).
+- *Why:* the method changed after pair 1 was seen (entries 42-45), so the remaining choices and
+  the test on a fresh pair must follow rules set before the outcomes are known, and must run
+  unattended.
+- *How:* a job queue (`runs/queue/jobs.txt`, run by `runs/queue/runner.ps1`) works through these
+  steps one at a time:
+  1. **Summary inputs** (`decide.py`): straight-line, unless the pairwise version beats it on
+     pair 1 (true matching) by at least 5 points of frames exactly right. If pairwise wins, it
+     must also not cost pair 0 more than 5 points (`decide2.py`), or it reverts to straight-line.
+     The choice and `emission: sentence` are written into `configs/pilot-decipher.yaml`, which
+     is then frozen.
+  2. **Pair 2's models**: language model and frame model trained from scratch on pair 2's own
+     streams, with the same settings as pairs 0 and 1.
+  3. **The full frozen pipeline on pair 1, then pair 0** (`--name decipher-v2`): shortlist, fit
+     six finalists, select by own score. No truth used.
+  4. **The gate** (`gate.py`): pair 2 runs only if the selected matching is the true one on
+     *both* pair 0 and pair 1. Both are scored against the truth.
+  5. **If the gate passes, pair 2**: the full frozen pipeline, untouched, then scored once. The
+     result is reported whatever it is, and the method is not changed in response to it.
+  6. **Purity checks on pair 1** (true matching): counted transitions instead of the frame model,
+     with and without the summaries; and both agent orders, to check they tie (entry 41's agent
+     ordering).
+- *Result:* see the entries that follow.
+- *Meaning:* step 5 is the pilot's first clean confirmation on a pair the method never saw.
+
+**47. Pairwise summary inputs with the new word model, and the decision.**
+- *Why:* entry 43's pairwise inputs failed with the old word model, whose early guesses were
+  poor. With the new word model the guesses are far better (entry 44), so pairwise inputs might
+  now help pair 1's objects instead of confirming mistakes. This is step 1 of entry 46.
+- *How:* pair 1, true matching, `emission: sentence`, `summary_features: pairs`, 512 episodes,
+  12 iterations. Compared with entry 44's straight-line run by the rule in entry 46.
+- *Result:*
+
+  | Pair 1, one fact per sentence | Frames exactly right | Agent places | Hunger | Glass / stone / apple |
+  |---|---|---|---|---|
+  | Straight-line summary inputs (entry 44) | **43.0%** | 0.97-0.99 | 0.96-0.97 | 0.67 / 0.86 / 0.78 |
+  | Pairwise summary inputs | 8.2% | 0.93-0.98 | 0.95-0.97 | 0.43 / 0.66 / 0.44 |
+
+  `decide.py`: "linear 0.430, pairs 0.082, chose linear". `configs/pilot-decipher.yaml` now has
+  `summary_features: linear` and `emission: sentence`, frozen.
+- *Meaning:* even with good early guesses, a summary model with 630 inputs fits the guesses'
+  mistakes too, and confirms them. A summary model learned from its own decoding has to be
+  simple. Pairwise inputs stay in the code as an option but are not part of the method.
+
+**48. Pair 2's two models.**
+- *Why:* pair 2 is the fresh pair for the clean confirmation (entry 46). It needs its own two
+  models, trained from scratch on its own streams.
+- *How:* corpus generated with `python -m grounding.data.make configs/pilot.yaml --pairs 2`
+  (50,000 episodes per stream, root seed 2), then the same training settings as pairs 0 and 1:
+  the predictive-state language model (60-minute limit) and the joint-head frame model
+  (20,000 steps).
+- *Result:* language model held-out loss **0.826** (best step 34,000 of 41,450; pair 0: 0.826,
+  pair 1: 0.825). Frame model validation loss **0.048** (pair 1: 0.047).
+- *Meaning:* all three pairs' models are trained to the same standard, so differences between
+  pairs come from the pairs themselves. Nothing on pair 2 has been aligned or scored yet.
+
+**49. The frozen method end to end on pair 1.**
+- *Why:* step 3 of entry 46. Entries 44-47 gave the method the true matching. Here it must find
+  the matching itself, with no truth used, through the shortlist and the selection.
+- *How:* `python -m grounding.align.decipher runs/pilot/pair-001 --name decipher-v2` with the
+  frozen config (`emission: sentence`, `summary_features: linear`). Shortlist of 6 by raw counts,
+  each fitted (512 episodes, 12 iterations), selected by own score on 128 selection episodes
+  (2 seeds). 68 minutes. Checked against the truth afterwards.
+- *Result:*
+
+  | Finalist | Matching (from the truth check) | Selection score | Gap to the truth |
+  |---|---|---|---|
+  | **1** | **true** | **18.42** | **0** |
+  | 5 | stone ↔ apple | 18.09 | -0.33 |
+  | 4 | full place mirror | 17.94 | -0.49 |
+  | 2 | river ↔ hill | 17.34 | -1.09 |
+  | 3 | bush ↔ cave | 16.99 | -1.43 |
+  | 6 | stone ↔ apple and river ↔ hill | 16.87 | -1.55 |
+
+  Seed-to-seed spread: 0.27 for finalist 1, 0.03-0.08 for the others. **Selected: finalist 1, the
+  true matching.** Under it, on all 300 held-out episodes: **43.8% of frames exactly right** (with
+  the agents swapped: the predicted symmetry), agent places 0.96-0.97, hunger 0.96-0.97, glass /
+  stone / apple 0.74 / 0.78 / 0.80.
+- *Meaning:*
+  - The method now works on pair 1 end to end, without the truth. Half of the gate for pair 2 is
+    passed.
+  - The closest rivals are the ones the world predicts: the object swap, because objects are
+    pair 1's weak point, and the full place mirror, the near-symmetry broken only by eating at the
+    bush. The margin over the object swap (0.33) is about 1.2 times finalist 1's own seed spread,
+    so on this pair the selection is right but not by a wide margin.
+
+**50. The frozen method end to end on pair 0, and the gate.**
+- *Why:* steps 3 and 4 of entry 46: the new method must also find pair 0's matching by itself,
+  and pair 2 may run only if both pairs select the true matching.
+- *How:* as entry 49, on pair 0 (67 minutes). Then `gate.py` compared each pair's selected
+  matching with the true one and scored both.
+- *Result:*
+
+  | Finalist (pair 0) | Selection score | Gap to the truth |
+  |---|---|---|
+  | **1: true** | **19.29** | **0** |
+  | 4 | 18.81 | -0.48 |
+  | 5 | 18.79 | -0.50 |
+  | 3 | 18.17 | -1.12 |
+  | 2 | 17.84 | -1.45 |
+  | 6 | 17.67 | -1.62 |
+
+  **Selected: finalist 1, the true matching.** Under it, on all 300 held-out episodes: **64.6% of
+  frames exactly right** (agents swapped), agent places and hunger 0.97, glass / stone / apple
+  0.88 / 0.93 / 0.92. Gate output: "pair-000: true matching YES; pair-001: true matching YES;
+  GATE PASSED: pair 2 queued".
+- *Meaning:*
+  - The frozen method finds the true matching on both pairs without the truth, so pair 2 runs.
+  - The new word model costs pair 0 about 10 points (75.3% with the old one, entry 40), in return
+    for working on pair 1 at all (0.5% to 43.8%). A method that works on both pairs is worth more
+    than one that fits pair 0's luck.
+  - On both pairs the closest rivals sit about 0.3-0.5 below the truth. The selection is right,
+    but its margin is modest.
+
+**51. Pair 2: the clean confirmation.**
+- *Why:* step 5 of entry 46. Pair 2 is a fresh pair the method had never seen, run once with the
+  method frozen. This is the pilot's first confirmation that doesn't depend on any choice made
+  after seeing the pair.
+- *How:* `python -m grounding.align.decipher runs/pilot/pair-002 --name decipher-v2` (67 minutes),
+  then `python -m grounding.analysis.score runs/pilot/pair-002 --kind decipher --name decipher-v2`,
+  both run automatically by the queue after the gate. No finalist was checked against the truth
+  before the scoring. The matching check below was done after the scoring, for the record.
+- *Result:*
+
+  | Finalist | Raw-count rank | Objects | Places | Selection score |
+  |---|---|---|---|---|
+  | 1 | 1st (0.1805) | right | wrong | 17.51 |
+  | **2** | **2nd (0.1808)** | **right** | **right** | **19.27** |
+  | 3 | 3rd | right | wrong | 18.81 |
+  | 4 | 4th | right | wrong | 17.63 |
+  | 5 | 5th | wrong | wrong | 17.26 |
+  | 6 | 6th | wrong | right | 18.61 |
+
+  **Selected: finalist 2, the true matching**, 0.46 ahead of the runner-up. Scored on all 300
+  held-out episodes: **70.1% of frames exactly right** allowing for the agent swap (the agents
+  came out swapped); chance 0.02%. Against the swapped truth: agent places 0.98, hunger 0.97,
+  glass / stone / apple 0.89 / 0.97 / 0.91.
+- *Meaning:*
+  - **On a fresh pair, with no paired data and no truth, the two trained models decode 70% of
+    held-out sentences into exactly the right world state.** The only systematic confusion is the
+    agent swap, which is the symmetry the proposal predicts (with the caveat in technical
+    decision 19 that the agents' order is fixed by construction).
+  - **Raw counts alone would have chosen wrong here:** they ranked a place swap first. The
+    separately fitted models chose the truth. This partly answers the concern that the pilot
+    world is "easy on counts": on this pair, counting wasn't enough.
+
+**52. Purity: what each trained model contributes, and the agent-order tie.**
+- *Why:* the proposal's claim is about what the two *trained models* learned, so each one has to
+  earn its place. And the agent order is fixed in the search (technical decision 19), so the
+  evidence should score both orders the same.
+- *How:* pair 1, true matching, 512 episodes, 12 iterations, `emission: sentence`. Each trained
+  model switched off in turn:
+  - the frame model replaced by `frame_model: counts`: next frames drawn from the frame stream's
+    own counted transitions out of the current frame, with no neural network (the nearest seen
+    frame where a frame was never seen);
+  - the language model's summaries switched off, leaving only the raw words.
+
+  And the normal setup with the agents' order flipped (`agents=swap`). A first attempt at the
+  counted runs crashed (integer matrix multiplication isn't supported on the GPU); fixed and
+  rerun.
+- *Result:*
+
+  | Pair 1, true matching | Summaries on | Words only |
+  |---|---|---|
+  | **Trained frame model** | **43.0%** (fit 18.51) | 0.2% |
+  | **Counted transitions** | 37.0% (fit 17.63) | 1.8% |
+
+  Agents' order flipped: fit **18.52** against 18.51 in the normal order, 31.6% of frames exactly
+  right (agent places 0.97-0.98, hunger 0.96, objects 0.63-0.76). The counted runs took about 2
+  minutes each, against about 11.
+- *Meaning:*
+  - **The language model is essential.** Without its summaries, alignment is at chance whichever
+    frame side is used.
+  - **The frame model, in this world, improves the fit but adds little accuracy** over a lookup
+    table of the frame data. The pilot world is small enough to enumerate: the table holds 49,219
+    distinct frames, so it already knows almost every transition. The pilot can't show the frame
+    model earning its place; that needs the richer worlds of the main phase, where a table can't
+    cover the states.
+  - **The two agent orders tie** (a difference of 0.01, within noise). The evidence genuinely
+    can't tell the agents apart, as predicted. The 12-point difference in frames exactly right
+    comes from run-to-run variation in the objects, not the agents. Restarts within one pair vary
+    this much, which matters for the variance estimates the pilot gate asks for.
+  - Next: both counted versions as full pipelines on all three pairs. Counted transitions with
+    words only is the proposal's no-neural-model co-occurrence control, which the method has to
+    beat (entry 53).
+
+**53. The controls as full pipelines on all three pairs.**
+- *Why:* the pilot gate asks that alignment beat the co-occurrence baseline. Entry 52 compared the
+  models under the true matching on one pair; this runs each control the way the method runs,
+  finding its own matching with no truth, on every pair.
+- *How:* `python -m grounding.align.decipher` with two control configs, then scoring:
+  - `configs/pilot-decipher-baseline.yaml`: **no neural model.** Counted transitions instead of
+    the frame model, and no language model (raw words only). This is the co-occurrence control:
+    raw word statistics against raw frame statistics, through the same word model and search.
+  - `configs/pilot-decipher-counts.yaml`: counted transitions instead of the frame model, with the
+    language model's summaries.
+
+  About 8-9 minutes per pair each. Running the controls on pair 2 doesn't change or tune the
+  method.
+- *Result:* (frames exactly right on 300 held-out episodes, allowing for the agent swap)
+
+  | | Pair 0 | Pair 1 | Pair 2 | Mean |
+  |---|---|---|---|---|
+  | **Method:** trained frame model + language model | **64.6%** | **43.8%** | **70.1%** | **59.5%** |
+  | Counted transitions + language model | 61.9% | 32.9% | 63.0% | 52.6% |
+  | No neural model (counted transitions + raw words) | 0.8% | 1.0% | 0.6% | 0.8% |
+  | Chance (shuffled predictions) | 0.03% | 0.02% | 0.02% | |
+
+  Every version selected the true matching on every pair.
+- *Meaning:*
+  - **The pilot's alignment gate is met:** the method beats the co-occurrence control on all three
+    pairs, by 43 to 69 points.
+  - **Both trained models earn their place.** Without the language model, decoding collapses to
+    about 1%. The trained frame model adds 2.7, 10.9 and 7.1 points over a lookup table, positive
+    on every pair, even in a world small enough to enumerate. (Entry 52's single comparison under
+    the true matching was too noisy to show this.)
+  - The raw words are enough to pick the right matching in this world, but not to decode states.
+    Matching words to entities is the easy part here; reading the state of the world from a
+    sentence is what needs the trained language model.
+
+**54. Variance: restarts within a pair against differences between pairs.**
+- *Why:* the pilot gate asks for variance estimates for the power analysis. The proposal's unit of
+  analysis is an independent pair, with restarts summarised rather than counted, so the question
+  is how much results vary between restarts on one pair compared with between pairs.
+- *How:* a new `seed` setting for a fit's random draws (seed 0 reproduces every earlier result).
+  On each pair, the selected matching (the true one on every pair) refitted with seeds 1 and 2,
+  512 episodes, 12 iterations, scored on the same 300 held-out episodes as the full runs. Seed 0
+  is the full run's own result (entries 49-51). Running this on pair 2 measures the method; it
+  doesn't change it.
+- *Result:* (frames exactly right, allowing for the agent swap)
+
+  | Pair | Seed 0 | Seed 1 | Seed 2 | Mean | Standard deviation |
+  |---|---|---|---|---|---|
+  | 0 | 64.6% | 69.1% | 70.8% | 68.2% | 3.2 |
+  | 1 | 43.8% | 41.6% | 39.8% | 41.7% | 2.0 |
+  | 2 | 70.1% | 67.2% | 73.0% | 70.1% | 2.9 |
+
+  Pooled spread within a pair: **2.7 points**. Spread of the pair means: **15.8 points**, around a
+  mean of 60.0%. (Entry 52's flipped-agent run on pair 1, 31.6%, is the one outlier; it also
+  changes the random draws.)
+- *Meaning:*
+  - **Almost all the variation comes from the pair** (its corpus and its two trained models), not
+    from the aligner's randomness. That matches the proposal's design: the power analysis must
+    count independent pairs, and extra restarts add little.
+  - Pair 1 is consistently harder (about 42%), because its language model stores object
+    positions in a form the straight-line summary model can't read (entry 42). How often a pair's
+    language model does that is itself something the main phase should measure.
+  - With this, both parts of the pilot gate are met: alignment beats the co-occurrence control
+    (entry 53), and variance estimates are in hand.

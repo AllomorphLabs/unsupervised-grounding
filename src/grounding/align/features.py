@@ -72,9 +72,16 @@ def model_points(
     layer: int = -1,
     episodes: np.ndarray | None = None,
     batch: int = 64,
+    window: int = 1,
 ) -> Points:
     """Hidden states from ``layer`` (0 is the input embedding, -1 the last layer), for the
-    given episodes (default: all)."""
+    given episodes (default: all).
+
+    With ``window > 1``, each point is the mean of the hidden states at its own position
+    and the ``window - 1`` positions before it, within the episode. A language model holds
+    at each position mostly the local state it needs there; pooling gathers what it knows
+    about every entity into one point. Only position, a public fact, is used.
+    """
     device = next(model.parameters()).device
     s = load_lang(data_dir) if stream == "lang" else load_obs(data_dir)
     data = s.tokens if stream == "lang" else s.frames
@@ -95,7 +102,13 @@ def model_points(
             x = torch.zeros((len(chunk), t, data.shape[1]))
             for j, (a, b) in enumerate(chunk):
                 x[j, : b - a] = torch.from_numpy(data[a:b].astype(np.float32))
-        h = model.hidden(x.to(device))[layer].cpu()
+        h = model.hidden(x.to(device))[layer].float().cpu()
+        if window > 1:
+            c = torch.cumsum(h, 1)
+            lag = torch.zeros_like(c)
+            lag[:, window:] = c[:, :-window]
+            n = torch.clamp(torch.arange(1, h.shape[1] + 1), max=window).view(1, -1, 1)
+            h = (c - lag) / n
         for j, (e, (a, b)) in enumerate(zip(eps, chunk, strict=True)):
             rows = np.flatnonzero(data[a:b] == stop) if stream == "lang" else np.arange(b - a)
             xs.append(h[j, rows])

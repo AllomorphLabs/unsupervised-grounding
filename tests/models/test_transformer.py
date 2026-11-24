@@ -47,3 +47,74 @@ def test_hidden_states_cover_every_layer():
     model = LanguageModel(10, TINY)
     h = model.hidden(torch.randint(0, 10, (3, 5)))
     assert h.shape == (TINY.layers + 1, 3, 5, TINY.width)
+
+
+def test_predictive_state_head_needs_the_sentence_end_token():
+    import pytest
+
+    with pytest.raises(ValueError):
+        LanguageModel(10, ModelConfig(layers=1, width=16, heads=2, context=32, future=4))
+
+
+def test_predictive_state_head_trains_the_summary():
+    torch.manual_seed(0)
+    cfg = ModelConfig(layers=1, width=16, heads=2, context=32, future=4, summary=8)
+    model = LanguageModel(10, cfg, anchor=9)
+    x = torch.randint(0, 9, (2, 20))
+    x[:, ::5] = 9  # sentence ends
+    plain = LanguageModel(10, ModelConfig(layers=1, width=16, heads=2, context=32))
+    plain.load_state_dict({k: v for k, v in model.state_dict().items() if k in plain.state_dict()})
+    model.eval()
+    # The head adds the future loss on top of the next-token loss.
+    assert model.loss(x).item() > plain.eval().loss(x).item()
+    assert model.summaries(x).shape == (2, 20, 8)
+    model.train()
+    model.loss(x).backward()
+    assert model.down.weight.grad.abs().sum() > 0
+
+
+def test_predictive_state_validation_loss_is_deterministic():
+    torch.manual_seed(0)
+    cfg = ModelConfig(layers=1, width=16, heads=2, context=64, future=4, summary=8)
+    model = LanguageModel(10, cfg, anchor=9).eval()
+    x = torch.randint(0, 9, (1, 60))
+    x[:, ::3] = 9  # more sentence ends than are sampled per episode
+    assert model.loss(x).item() == model.loss(x).item()
+
+
+JOINT = ModelConfig(layers=2, width=16, heads=2, context=32, joint=True, joint_hidden=32)
+
+
+def test_joint_head_sees_only_earlier_values_of_the_next_frame():
+    torch.manual_seed(0)
+    model = FrameModel(6, JOINT).eval()
+    h = torch.randn(3, JOINT.width)
+    x = torch.randint(0, 2, (3, 6)).float()
+    y = x.clone()
+    y[:, 3:] = 1 - y[:, 3:]  # change values 3 onwards
+    a, b = model.next_logits(h, x), model.next_logits(h, y)
+    assert torch.allclose(a[:, :4], b[:, :4], atol=1e-6)  # value 3's logit can't see value 3
+    assert not torch.allclose(a[:, 4:], b[:, 4:])
+
+
+def test_joint_head_gives_a_distribution_over_whole_frames():
+    torch.manual_seed(0)
+    model = FrameModel(4, JOINT).eval()
+    h = torch.randn(1, JOINT.width).expand(16, -1)
+    every = torch.tensor([[(i >> k) & 1 for k in range(4)] for i in range(16)]).float()
+    with torch.no_grad():
+        total = model.log_prob_next(h, every).exp().sum()
+    assert torch.isclose(total, torch.tensor(1.0), atol=1e-5)
+
+
+def test_joint_frame_model_is_causal_and_samples_frames():
+    torch.manual_seed(0)
+    model = FrameModel(9, JOINT).eval()
+    frames = torch.randint(0, 2, (2, 10, 9)).float()
+    changed = frames.clone()
+    changed[:, 6:] = 1 - changed[:, 6:]
+    assert torch.allclose(model.context(frames)[:, :6], model.context(changed)[:, :6], atol=1e-6)
+    mask = torch.ones(2, 10, dtype=torch.bool)
+    assert model.loss(frames, mask).item() > 0
+    s = model.sample_next(model.context(frames)[:, -1])
+    assert s.shape == (2, 9) and set(s.unique().tolist()) <= {0.0, 1.0}

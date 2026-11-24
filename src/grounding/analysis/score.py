@@ -21,6 +21,11 @@ Reported, for the selected restart and for every restart:
 - ``chance``: the same scores with predictions shuffled among sentences.
 
 The condition must pass the pre-registration firewall first.
+
+``--kind decipher`` scores ``grounding.align.decipher`` instead: each finalist's decoded frame at
+every held-out sentence end is read back into a state (with the pair's hidden slot shuffle) and
+compared with the truth in the same way. The selected finalist is the result; the others are
+reported alongside, so wrong matchings' accuracy is visible too.
 """
 
 import argparse
@@ -33,6 +38,7 @@ import torch
 from grounding.align.run import AlignConfig, load_fitted, points, sample_episodes
 from grounding.analysis.labels import load_key, load_lang_labels, load_obs_labels
 from grounding.render.lang.grammar import KINDS
+from grounding.render.state.vector import decode as read_frame
 from grounding.runs.conditions import check_can_analyse
 from grounding.runs.record import read_record
 from grounding.sim.symmetry import Relabel, automorphisms
@@ -99,7 +105,9 @@ def score_predictions(
     }
 
 
-def score_pair(pair: Path, kind: str, cfg: AlignConfig, device: str | None = None) -> dict:
+def score_pair(
+    pair: Path, kind: str, cfg: AlignConfig, device: str | None = None, name: str | None = None
+) -> dict:
     pair = Path(pair)
     condition = pair.parent.name
     check_can_analyse(condition)
@@ -111,17 +119,21 @@ def score_pair(pair: Path, kind: str, cfg: AlignConfig, device: str | None = Non
         raise ValueError("world in the run record doesn't match the pair's key")
     group = automorphisms(world)
 
-    lang, obs = points(pair, kind, cfg.layer, dev, sample_episodes(pair, cfg)["score"])
+    lang, obs = points(pair, kind, cfg, dev, sample_episodes(pair, cfg)["score"])
     if not (lang.held_out.all() and obs.held_out.all()):
         raise ValueError("scoring must use held-out episodes only")
     truth = lang_truth(data, lang.position)
     frame_states = obs_truth(data, obs.position)
 
-    summary = json.loads((pair / "align" / kind / "summary.json").read_text(encoding="utf-8"))
+    summary = json.loads(
+        (pair / "align" / (name or kind) / "summary.json").read_text(encoding="utf-8")
+    )
     rng = np.random.default_rng(0)
     results = []
     for r in summary["restarts"]:
-        fitted = load_fitted(pair / "align" / kind / f"restart-{r['restart']:02d}.pt", dev)
+        fitted = load_fitted(
+            pair / "align" / (name or kind) / f"restart-{r['restart']:02d}.pt", dev
+        )
         mapped = fitted.to_obs(lang.x)
         frames = fitted.norm_y(obs.x.to(dev))
         predicted = frame_states[nearest(mapped, frames)]
@@ -144,8 +156,50 @@ def score_pair(pair: Path, kind: str, cfg: AlignConfig, device: str | None = Non
     }
     dest = pair / "analysis"
     dest.mkdir(exist_ok=True)
-    (dest / f"score-{kind}.json").write_text(json.dumps(out, indent=2), encoding="utf-8")
+    (dest / f"score-{name or kind}.json").write_text(json.dumps(out, indent=2), encoding="utf-8")
     return out
+
+
+def score_decipher(pair: Path, name: str = "decipher") -> dict:
+    pair = Path(pair)
+    condition = pair.parent.name
+    check_can_analyse(condition)
+    data = pair / "data"
+    key = load_key(data)
+    world = make_world(**_world_spec(pair))
+    if list(world.agents) != key["world"]["agents"]:
+        raise ValueError("world in the run record doesn't match the pair's key")
+    slots = key["obs_slots"]
+    shuffle = Relabel(tuple(slots["agents"]), tuple(slots["objects"]), tuple(slots["places"]))
+    group = automorphisms(world)
+    folder = pair / "align" / name
+    summary = json.loads((folder / "summary.json").read_text(encoding="utf-8"))
+    rng = np.random.default_rng(0)
+    results = []
+    for row in summary["finalists"]:
+        with np.load(folder / f"finalist-{row['finalist']}.npz") as z:
+            frames, positions = z["frames"], z["positions"]
+        truth = lang_truth(data, positions)
+        predicted = np.stack([state_to_array(read_frame(world, f, shuffle)) for f in frames])
+        out = {"finalist": row["finalist"], "score": row["score"]}
+        out |= score_predictions(world, group, predicted, truth)
+        out["chance"] = score_predictions(
+            world, group, predicted[rng.permutation(len(predicted))], truth
+        )
+        results.append(out)
+    report = {
+        "condition": condition,
+        "kind": "decipher",
+        "selected": summary["selected"],
+        "symmetries": [r.describe(world) for r in group],
+        "sentences": len(truth),
+        "result": results[summary["selected"]],
+        "finalists": results,
+    }
+    dest = pair / "analysis"
+    dest.mkdir(exist_ok=True)
+    (dest / f"score-{name}.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    return report
 
 
 def _world_spec(pair: Path) -> dict:
@@ -156,11 +210,17 @@ def _world_spec(pair: Path) -> dict:
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     p.add_argument("pair", type=Path)
-    p.add_argument("--kind", choices=("model", "raw"), required=True)
+    p.add_argument("--kind", choices=("model", "raw", "decipher"), required=True)
     p.add_argument("--config", type=Path, default=Path("configs/pilot-align.yaml"))
     p.add_argument("--device", default=None)
+    p.add_argument("--name", default=None, help="results folder under align/ (default: kind)")
     args = p.parse_args()
-    out = score_pair(args.pair, args.kind, AlignConfig.from_yaml(args.config), args.device)
+    if args.kind == "decipher":
+        out = score_decipher(args.pair, args.name or "decipher")
+        print(json.dumps(out["result"], indent=2))
+        return
+    cfg = AlignConfig.from_yaml(args.config)
+    out = score_pair(args.pair, args.kind, cfg, args.device, args.name)
     print(json.dumps(out["result"], indent=2))
 
 

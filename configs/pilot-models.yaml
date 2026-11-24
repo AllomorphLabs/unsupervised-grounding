@@ -5,6 +5,8 @@ model:
   width: 128
   heads: 4
   dropout: 0.0
+  joint: true  # frame model only: whole next frames (technical decision 18)
+  joint_hidden: 256
 train:
   steps: 20000
   batch_size: 32

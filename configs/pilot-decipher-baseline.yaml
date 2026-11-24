@@ -1,0 +1,25 @@
+# CONTROL, not the method: no neural model at all. Counted transitions replace the frame model and the language model is not used (experiment log, entry 52).
+# Decipherment settings for the pilot (technical decision 19; experiment log, entries 32-40).
+# First frozen after pair 0. emission and summary_features were chosen after pair 1's first
+# run failed (experiment log, entries 42-46), by a rule fixed in advance; the other settings are
+# unchanged. Frozen in this form before pair 2 was run.
+lang_model: lang-ps  # predictive-state language model (decision 17)
+frame_model: counts  # counted transitions from the frame stream; no frame model (control)
+train_episodes: 512
+select_episodes: 128
+score_episodes: 300
+batch: 64
+max_sentences: 100
+sentence_tokens: 6
+particles: 32
+candidates: 4
+iterations: 12
+own_prior: 20.0
+smooth: 0.01
+summary_power: 0.2
+summary_features: linear  # the frame's values only; chosen by the rule in entry 46
+emission: sentence  # each sentence states one fact (entry 44)
+summary_from: 99  # summaries never used: no language model (no-neural-model control)
+freeze_mixture: 8
+update_paths: 8
+shortlist: 6
