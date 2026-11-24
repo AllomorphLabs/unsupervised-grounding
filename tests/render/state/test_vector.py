@@ -98,3 +98,14 @@ def test_relabelling_the_world_only_permutes_coordinates(world, states):
         ]
         assert matches, f"coordinate {j} is not a relabelled copy of any coordinate"
         used.add(matches[0])
+
+
+def test_package_decode_inverts_encode_under_any_shuffle(world, states):
+    from grounding.render.state.vector import decode as read_frame
+
+    rng = np.random.default_rng(1)
+    for s in states[:100]:
+        shuffle = Relabel(
+            *(tuple(rng.permutation(len(x))) for x in (world.agents, world.objects, world.places))
+        )
+        assert read_frame(world, encode(world, s, 0, shuffle), shuffle) == s

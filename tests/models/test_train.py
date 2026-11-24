@@ -117,3 +117,34 @@ def test_pilot_models_config_loads():
     )
     assert (cfg.model.layers, cfg.model.width, cfg.model.heads) == (4, 128, 4)
     assert cfg.train.max_minutes == 10
+
+
+def test_pilot_language_config_loads():
+    cfg = ModelsConfig.from_yaml(
+        Path(__file__).resolve().parents[2] / "configs" / "pilot-lang.yaml"
+    )
+    assert (cfg.model.layers, cfg.model.width, cfg.model.heads) == (6, 256, 8)
+    assert cfg.train.amp
+
+
+def test_predictive_state_language_model_trains_and_reloads(pair, tmp_path):
+    cfg = ModelsConfig(
+        ModelConfig(layers=1, width=32, heads=2, future=6, summary=8),
+        TrainConfig(steps=40, batch_size=8, lr=3e-3, warmup=5, eval_every=20, max_minutes=1),
+    )
+    train(pair, "lang", cfg, device="cpu", out=tmp_path / "ps")
+    model = load_model(tmp_path / "ps")
+    x = torch.randint(0, 5, (1, 12))
+    assert model.summaries(x).shape == (1, 12, 8)
+
+
+def test_joint_frame_model_trains_and_reloads(pair, tmp_path):
+    cfg = ModelsConfig(
+        ModelConfig(layers=1, width=32, heads=2, joint=True, joint_hidden=64),
+        TrainConfig(steps=40, batch_size=8, lr=3e-3, warmup=5, eval_every=20, max_minutes=1),
+    )
+    train(pair, "obs", cfg, device="cpu", out=tmp_path / "joint")
+    model = load_model(tmp_path / "joint")
+    assert model.joint is not None
+    h = model.context(torch.zeros(1, 3, model.frame_size))[:, -1]
+    assert model.sample_next(h).shape == (1, model.frame_size)

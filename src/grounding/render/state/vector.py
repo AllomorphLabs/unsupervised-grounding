@@ -50,3 +50,35 @@ def encode(world: World, state: State, actor: int | None, shuffle: Relabel) -> n
             v[off + 2 * p + a] = 1
         off += 2 * p + a + 1
     return v
+
+
+def decode(world: World, frame: np.ndarray, shuffle: Relabel) -> State:
+    """The state a frame shows (the inverse of ``encode``, ignoring who acted).
+
+    Each block is read by its largest value, so a frame that isn't exactly one-hot (for
+    example a model's guess) still decodes to a state. For scoring only: the shuffle is part
+    of the pair's hidden key.
+    """
+    a, p = len(world.agents), len(world.places)
+    inv = shuffle.inverse()
+    v = np.asarray(frame)
+    pos, hungry, off = [0] * a, [False] * a, 0
+    for slot in range(a):
+        agent = inv.agents[slot]
+        pos[agent] = inv.places[int(np.argmax(v[off : off + p]))]
+        hungry[agent] = bool(v[off + p] > 0.5)
+        off += p + 2
+    loc: list[tuple[int, int]] = [(AT, 0)] * len(world.objects)
+    for slot in range(len(world.objects)):
+        k = int(np.argmax(v[off : off + 2 * p + a + 1]))
+        if k < p:
+            where = (AT, inv.places[k])
+        elif k < p + a:
+            where = (HELD, inv.agents[k - p])
+        elif k < 2 * p + a:
+            where = (BROKEN, inv.places[k - p - a])
+        else:
+            where = (GONE, -1)
+        loc[inv.objects[slot]] = where
+        off += 2 * p + a + 1
+    return State(tuple(pos), tuple(hungry), tuple(loc))

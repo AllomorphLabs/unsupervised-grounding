@@ -14,7 +14,7 @@ There's an interactive demo of the idea on the website: <https://allomorphlabs.c
 
 ## Status
 
-Pilot in progress. The simulated world, the invented language, the paired data streams, the two models and the alignment are built and tested; the first pilot results come next.
+Pilot in progress. The simulated world, the invented language, the two data streams and the two models are built and tested. On the first pilot pair, aligning the two models with no paired data decodes about three quarters of held-out sentences into exactly the right world state; the method is now being confirmed on fresh pairs. Every attempt so far, including the ones that failed, is recorded in the [experiment log](docs/alignment-attempts.md).
 
 ## Running the code
 
@@ -31,27 +31,28 @@ To build the pilot's paired data streams (written to `runs/`):
 uv run python -m grounding.data.make configs/pilot.yaml --pairs 0-9
 ```
 
-To train a pair's language and observation models (up to 10 minutes each on a GPU):
+To train a pair's language and observation models (up to an hour and 10 minutes on a GPU):
 
 ```
-uv run python -m grounding.models.train runs/pilot/pair-000 --stream lang
-uv run python -m grounding.models.train runs/pilot/pair-000 --stream obs
+uv run python -m grounding.models.train runs/pilot/pair-000 --stream lang --out runs/pilot/pair-000/models/lang-ps
+uv run python -m grounding.models.train runs/pilot/pair-000 --stream obs --out runs/pilot/pair-000/models/obs-joint
 ```
 
-To align a pair's models, run the co-occurrence baseline, and score both against the ground truth:
+To align a pair's two models (decipherment, about 80 minutes on a GPU) and score the result against the ground truth:
 
 ```
-uv run python -m grounding.align.run runs/pilot/pair-000 --kind model
-uv run python -m grounding.align.run runs/pilot/pair-000 --kind raw
-uv run python -m grounding.analysis.score runs/pilot/pair-000 --kind model
-uv run python -m grounding.analysis.score runs/pilot/pair-000 --kind raw
+uv run python -m grounding.align.decipher runs/pilot/pair-000
+uv run python -m grounding.analysis.score runs/pilot/pair-000 --kind decipher
 ```
+
+The earlier representation-matching aligner and the co-occurrence baseline are still available through `grounding.align.run` (`--kind model` and `--kind raw`).
 
 ## Documents
 
 - **[The full proposal](docs/proposal.md)**: hypotheses, experimental design, controls, analysis plan and work plan.
 - The same proposal as a Word document: [allomorphlabs.com/proposals/predicting-the-limits-of-unsupervised-grounding.docx](https://allomorphlabs.com/proposals/predicting-the-limits-of-unsupervised-grounding.docx)
 - **[Technical decisions](docs/technical-decisions.md)**: the engineering choices behind the code, such as language, tooling and how the invented language is split into tokens, and the reasons for each.
+- **[Experiment log](docs/alignment-attempts.md)**: every alignment attempt in the pilot, in plain language: why it was tried, what was done, what happened and what it means.
 
 ## Principles
 

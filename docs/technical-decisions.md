@@ -18,8 +18,13 @@ Status is **Decided** (code follows it), **Proposed** (current plan, not yet con
 | 10 | Pilot grammar: SOV, case and tense suffixes, every change said | Decided |
 | 11 | Nothing about entity order can bias the swap rate | Decided |
 | 12 | Corpus pairs: episode lengths, the actor mark and hidden ground truth | Decided |
-| 13 | Pilot models: one small causal transformer for both streams | Decided |
-| 14 | Pilot alignment: vec2vec-style, on world states, with strong geometry preservation | Decided |
+| 13 | Pilot models: a small causal transformer for each stream | Decided |
+| 14 | Pilot alignment: on world states, judged by the target stream's dynamics | Decided |
+| 15 | A medium language model for the pilot | Decided |
+| 16 | Why alignment must use the world's dynamics | Decided |
+| 17 | A predictive-state head on the language model | Decided |
+| 18 | The frame model predicts whole next frames | Decided |
+| 19 | Alignment by decipherment on the two trained models | Decided |
 
 ## 1. Python 3.15, PyTorch, uv
 
@@ -146,9 +151,9 @@ A test checks this works: on the tiny world, an aligner that ties perfectly betw
 
 `python -m grounding.models.train runs/pilot/pair-000 --stream lang` (or `--stream obs`) trains one model of a pair, with settings from `configs/pilot-models.yaml` (`models/`).
 
-- **One architecture for both streams:** a causal transformer with 4 layers, width 128 and 4 heads, about 0.85M parameters, reading one whole episode at a time. The proposal's range starts at a few million parameters; this smaller size is for the pilot only, and the work plan scales up if H1 fails.
+- **One architecture for both streams:** a causal transformer with 4 layers, width 128 and 4 heads, about 0.85M parameters, reading one whole episode at a time. The proposal's range starts at a few million parameters; this smaller size is for the pilot only, and the work plan scales up if H1 fails. Decision 15 enlarges the language model.
 - **Language model:** predicts the next token.
-- **Frame model:** predicts each of the next frame's values as an independent yes/no. It isn't told which values form a block, so the structure of the world isn't handed to it.
+- **Frame model:** predicts each of the next frame's values as an independent yes/no; decision 18 replaces this with whole frames. It isn't told which values form a block, so the structure of the world isn't handed to it.
 - **Budget:** 20,000 steps or 10 minutes per model, whichever comes first. On the workstation GPU that is about 10 minutes for the language model and 5 for the frame model.
 - **Best model kept:** 10% of the training episodes are set aside for validation, and the model kept is the one from the step with the lowest validation loss. In the first trial pair, held-out loss rose while training loss kept falling, which means memorisation. The held-out episodes are reserved for scoring: they play no part in training or in choosing the model, and their loss is reported once, at the end.
 - **Seeds:** each model's training seed is drawn from its own part of its stream's seed, so every pair and stream trains independently. Runs are exactly reproducible on the CPU; on the GPU they may differ in the last digits.
@@ -159,10 +164,108 @@ A test checks this works: on the tiny world, an aligner that ties perfectly betw
 `python -m grounding.align.run runs/pilot/pair-000 --kind model` aligns a pair, and `python -m grounding.analysis.score runs/pilot/pair-000 --kind model` scores it, with settings from `configs/pilot-align.yaml` (`align/`, `analysis/score.py`). `--kind raw` runs the co-occurrence baseline.
 
 - **What is aligned:** each model's picture of the world at each moment. That is the language model's hidden state at every sentence end, and the frame model's hidden state at every frame, from the last layer. Only public structure is used to choose these points. Opening sentences and recaps have no exact counterpart among the frames.
-- **Method:** vec2vec-style (after Jha et al., 2025). Two maps, language to observations and back, are trained with adversarial losses, round-trip consistency and preservation of each cloud's internal geometry. No labels and no pairs are used. 20 restarts are run per pair; the one kept has the lowest maximum mean discrepancy (MMD) between mapped and real points, a score that needs no labels. Every restart is saved and scored.
-- **Strong geometry preservation.** Flexible maps can reshape any cloud of points into any other, so matching distributions alone doesn't identify the right mapping. On a toy problem (recovering a hidden rotation between clusters of unequal size), at geometry weight 1 the restart with the lowest MMD was wrong. At weight 100 it was right. A test checks that the lowest-MMD restart recovers the toy mapping.
-- **Co-occurrence baseline:** the same method on raw statistics, with no neural model. For language, the token counts of the current sentence and the share of each token so far in the episode; for observations, the raw frame. So any gain over the baseline comes from the learned models, not the method.
+- **Method:** a candidate mapping is judged by how plausible the mapped episodes are to the target stream's trained model (its next-step loss), and the search looks for the mapping with the lowest loss. No labels and no pairs are used. Several restarts are run per pair; the one kept has the lowest judge loss, a score that needs no labels. Every restart is saved and scored. Decision 16 gives the reasons. The search method and the form of the map are being developed on a ladder of controls (frames to frames, then the cipher control, then language to observations) and are frozen before the main conditions.
+- **Retired:** the first method, vec2vec-style matching of distributions (after Jha et al., 2025), failed every control. Its code stays until the new aligner replaces it.
+- **Superseded for language to frames by decision 19.** A map trained against the judge alone can game it, by inventing or by freezing (decision 16). The judge's insight, that dynamics identify the mapping, carries over into decision 19.
+- **Co-occurrence baseline:** the same method on raw statistics, with no neural model. For language, the token counts of the current sentence and the share of each token so far in the episode; for observations, the raw frame. So any gain over the baseline comes from the learned models, not the method. How to judge raw statistics without a trained model (for example a count-based model of the target stream) is Open.
 - **Sampling:** alignment uses 5,000 training episodes per side, and scoring 1,000 held-out episodes per side. Both are drawn from the pair's alignment seed and shared by the model alignment and the baseline.
 - **Scoring:** each held-out sentence end is mapped across, and the true state of its nearest held-out frame is the prediction. Reported: exact accuracy, accuracy up to symmetry, agreement with each symmetry's relabelling of the truth (which shows whether a pair swapped the agents), accuracy per part of the state, and all of these again for shuffled predictions as chance.
 - **Firewall:** scoring refuses any condition not registered in `runs/conditions.py`, and any main condition until `prereg/LOCK` exists.
-- **Entity order (decision 11, point 4):** each restart draws its own initialisation and its own random order of points. The maps don't choose between entities by index, so no tie can fall to whichever entity comes first.
+- **Entity order (decision 11, point 4):** each restart draws its own random starting mapping and its own random search order, so no tie can fall to whichever entity comes first.
+
+## 15. A medium language model for the pilot
+
+From the first pilot run (notes in `runs/pilot-notes.md`, not committed).
+
+The 0.86M-parameter language model predicts well (96.8% of its next-word probability falls on legal actions) but holds the world state only weakly: a two-layer probe on its hidden states, pooled over the last 30 positions, reads places at 0.69 and object locations at 0.59-0.69. A 4.9M-parameter model (6 layers, width 256, 8 heads), trained for an hour with bf16 mixed precision and learning rate 1e-3, predicts no better (validation loss 0.406 against 0.407) but holds the state more explicitly: places 0.76, objects 0.76-0.84. This size is inside the proposal's range.
+
+The language model's settings are in `configs/pilot-lang.yaml`, which training uses by default for the language stream. The frame model keeps decision 13's size: it already holds the state perfectly.
+
+## 16. Why alignment must use the world's dynamics
+
+From the first pilot run; decision 14 follows from it.
+
+- **vec2vec fails even on the easiest control:** raw frames of one pair against raw frames of another, which differ only in slot order. Every restart scored at chance, with the two distributions matched but the wrong mapping found. On real hidden states it was also at chance, while a map fitted with true pairs showed the signal was there.
+- **Why:** single moments don't show which places are next to which. In the static distribution, places with similar visit rates are interchangeable, a far larger group than the world's automorphisms. Gromov-Wasserstein matching of single frames shows this directly, mapping places by clean but wrong permutations (bush and cave swapped).
+- **What works on the easy control:** judging a candidate mapping by how plausible the mapped episodes are to a trained model of the target stream. The true mapping and its agent-swapped twin score exactly the same (0.1156) and far better than random ones (0.68-0.80); a pairwise-swap search finds the exact mapping, up to the agent swap, in the restart with the best score.
+- **The objective is right for language too.** Ideal mappings of language points, checked against the truth, score 0.105 under the judge; every single wrong swap of places or objects scores worse (0.118-0.274), and only the agent swap ties. Opening sentences and recaps don't hurt it.
+- **But the judge can be gamed in two ways.** A flexible map can invent plausible trajectories that ignore its input, and static trajectories are very plausible to a next-step model. So the map must be constrained: with linear readouts, a correct map scores 0.153 and one with two objects swapped 0.220, while with small networks both score 0.153.
+- **Still to solve:** finding a constrained language-to-observation map without labels. Gradient search, re-initialising parts of the map, matching slow components of the dynamics, and discrete summaries in the frame's format were all tried and stayed at chance, apart from one agent's place in some restarts.
+
+## 17. A predictive-state head on the language model
+
+From the second pilot session. The language model also has to predict the future from a summary: at each sentence end, a 64-number vector must predict the next 48 tokens on its own, through a small two-layer decoder, as well as the usual next token. What comes next depends on where everything is, so the summary is pushed to hold the whole state. It is still trained only on its own stream.
+
+- **Why:** next-token training gave good predictions but a weak picture of the world (decision 15: places 0.76, objects 0.76-0.84). With the head, trained from scratch on pair 0 for an hour, two-layer probes on the summary read agent places, hunger, the stone and the apple at 0.97, and the glass at 0.77 (0.93 from the last layer's hidden state). A map fitted with the truth then gets 68% of frames exactly right, against 5% before.
+- **Settings:** `future`, `summary` and `future_layers` in the model config (`configs/pilot-lang.yaml`); `future: 0` turns the head off. Summaries are taken at sentence ends, which are public structure. The loss is the sum of the next-token and future losses, and the best step is chosen by that sum.
+- **Glass:** it lags in the summary, probably because a broken glass's place never affects what happens next.
+
+## 18. The frame model predicts whole next frames
+
+From the third pilot session. Alignment must run on two trained models, one per stream, so the
+aligner takes its picture of how frames change from the trained frame model. For that it needs
+the probability of a whole next frame and valid samples of one. Independent yes/no values can't
+give either: they can't say "if agent A acted, then A's place changed, not B's".
+
+- **Head:** a masked network (after MADE, Germain et al., 2015) reads the transformer's context
+  and predicts the next frame's values one after another, each given the values before it. The
+  product of its yes/no probabilities is the probability of the whole frame. It is still trained
+  only on the frame stream, from scratch, with the same per-value loss.
+- **Settings:** `joint` and `joint_hidden` in the model config, on in `configs/pilot-models.yaml`.
+  `model.log_prob_next` scores a candidate next frame; `model.sample_next` draws one.
+- **Still not told the structure:** the value order is the frame's own; the head isn't told
+  which values form a block.
+
+## 19. Alignment by decipherment on the two trained models
+
+From the third pilot session (experiment log, entries 21-46). `python -m grounding.align.decipher
+runs/pilot/pair-001` aligns a pair, and `python -m grounding.analysis.score runs/pilot/pair-001
+--kind decipher` scores it, with settings from `configs/pilot-decipher.yaml` (`align/decipher.py`,
+`align/structure.py`).
+
+- **Idea:** the language is treated as a code for a hidden sequence of frames. The fit must explain
+  every sentence, so it can't ignore its input or freeze, the two ways a map trained against a
+  judge can cheat.
+- **Two trained models:** the frame model proposes next frames (its joint head, decision 18), and
+  the language model's 64-number summaries (decision 17) weigh them, as a Gaussian linear in the
+  frame, softened by a power of 0.2. The words weigh them too, through shared role tables (see
+  below). No table of the frame data's transitions is used. Without the summaries, alignment on
+  pair 1 falls to chance (entries 43 and 45), so the language model carries it.
+- **Each sentence states one fact** (`emission: sentence`, entry 44): a sentence picks one
+  value that is on, or one change, and all its words come from that fact's table, the background,
+  or the acting agent's place. Explaining each word separately, from any fact, left objects at
+  chance on pair 1.
+- **Summary inputs** (`summary_features`): the frame's values, or also their pairwise products.
+  Chosen by the rule in entry 46. Products fitted to the filter's own early guesses confirmed
+  its mistakes when the old word model was in use (entry 43).
+- **Inference:** a particle filter, 32 guesses per language episode. Until a guess first moves,
+  each episode keeps exact odds over every start frame. EM refits the tables, and from iteration 5
+  the Gaussian, to the guesses' paths. The mixture weights are fixed after iteration 8.
+- **Structure from each stream alone:** frame values are grouped into entities (agents' places,
+  hunger and acted flags; objects' "at", "held", "broken" and "gone" values), and words into
+  agents, objects, places and verbs, before the streams are compared (`align/structure.py`).
+- **Shared role tables:** each kind of frame feature has one word table written in roles (this
+  agent, another place, ...), plus a role for the acting agent's place. A *matching* turns roles
+  into words, so a wrong matching can't be patched up by free tables.
+- **Choosing the matching:** all matchings are ranked by how far apart the two streams' raw
+  frequency profiles are. The top 6 are each fitted, and the fit that best explains 128 held-out
+  selection episodes (words plus summaries, including the Gaussian's width term) is kept. Agents
+  are fixed in one order, since their swap is a symmetry. **Known limitation for H3:** which
+  agent word lands on which frame agent is then decided by arbitrary numbering, not by the
+  evidence, so a 50% swap rate across pairs is close to guaranteed by construction. The main
+  phase should search both agent orders and test that they tie.
+- **The share of sentences that advance the frame** (0.23 stay probability in pair 0) comes from
+  each stream's mean episode length: a population statistic, not a pairing.
+- **Frozen after pair 0** (75% of frames exactly right, true matching selected). Pair 1 then
+  failed on objects (entry 42), and the word model and summary inputs were changed in response
+  (entries 43-46), so pair 1 is a tuning pair, not a confirmation. Pair 2 is run once with the
+  method frozen again, only if it selects the true matching on pairs 0 and 1.
+- **A departure from the proposal.** The proposal names representation-level methods
+  (vec2vec-style, cycle-consistent, quadratic assignment), and its working definition maps the
+  language model's representations onto the grounded model's. Those methods failed here
+  (entries 1-20). Decipherment uses the frame model as a generator of frame histories rather than
+  for its hidden representations, and uses the raw words as well as the language model's
+  summaries. This must be raised as a change to the proposal before the main phase.
+- **No neural model baseline:** `frame_model: counts` replaces the frame model with counted
+  transitions from the frame stream (nearest seen frame where unseen), for the co-occurrence
+  control.

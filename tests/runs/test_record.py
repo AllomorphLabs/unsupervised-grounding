@@ -26,10 +26,15 @@ def test_refuses_to_overwrite(tmp_path):
 
 def test_git_state_tracks_commit_and_changes(tmp_path):
     def git(*args):
-        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True, timeout=30)
 
     git("init")
-    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-m", "x")
+    # A throwaway repository: signing is turned off here only, so a machine that signs
+    # commits by default doesn't stop the test to ask for a passphrase.
+    git(
+        "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
+        "commit", "--allow-empty", "-m", "x",
+    )  # fmt: skip
     commit, dirty = git_state(tmp_path)
     assert commit is not None and len(commit) == 40
     assert dirty is False
