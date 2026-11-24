@@ -233,14 +233,14 @@ The pilot (phase 1) is complete, and both parts of its gate are met. The full re
 
 **Setting.** Two interchangeable agents, three objects and four places on a path. Observations are 45 yes/no state values per moment, in shuffled order. Each stream trains its own small transformer from scratch. The method was developed on two corpus pairs. Because it was changed after the second pair was seen, that pair counts as tuning, not as a confirmation. The method was then frozen and run once on a third, untouched pair.
 
-**Results.** The frozen method, which never sees the ground truth, found the true word-to-entity matching on all three pairs, up to the predicted agent swap. Accuracy is the share of held-out sentences decoded to exactly the right world state, with all 45 values correct.
+**Results.** The frozen method, which never sees the ground truth, found the true word-to-entity matching on all three pairs, up to the predicted agent swap. Accuracy is the share of held-out sentences decoded to exactly the right world state, with all 45 values correct, up to the world's symmetry (here, the order of the two agents).
 
 | Pair                   | The method | Lookup-table world model | Co-occurrence (no neural model) |
 |------------------------|------------|--------------------------|---------------------------------|
-| 0 (development)        | 64.6%      | 61.9%                    | 0.8%                            |
-| 1 (tuning)             | 43.8%      | 32.9%                    | 1.0%                            |
+| 0 (development)        | 64.7%      | 61.9%                    | 0.8%                            |
+| 1 (tuning)             | 44.0%      | 32.9%                    | 1.0%                            |
 | 2 (confirmation)       | 70.1%      | 63.0%                    | 0.6%                            |
-| Mean                   | 59.5%      | 52.6%                    | 0.8%                            |
+| Mean                   | 59.6%      | 52.6%                    | 0.8%                            |
 
 Chance is about 0.02%. Without the language model's sentence summaries, alignment falls to chance, so the language model is essential. The learned world model adds 3–11 points over the lookup table on every pair. On the confirmation pair, raw word counts alone ranked a wrong matching first.
 

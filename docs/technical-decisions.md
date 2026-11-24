@@ -268,7 +268,7 @@ runs/pilot/pair-001` aligns a pair, and `python -m grounding.analysis.score runs
 - **Controls:** `frame_model: counts` replaces the frame model with counted transitions from
   the frame stream (nearest seen frame where unseen). `configs/pilot-decipher-baseline.yaml` (counted
   transitions, no language model) is the co-occurrence control; `configs/pilot-decipher-counts.yaml`
-  keeps the language model. On the three pilot pairs: method 59.5% of frames exactly right on
-  average, without the frame model 52.6%, co-occurrence control 0.8% (entry 53).
+  keeps the language model. On the three pilot pairs: method 59.6% of frames exactly right on
+  average, without the frame model 52.6%, co-occurrence control 0.8% (entries 53 and 55, scored up to symmetry).
 - **Restarts:** `seed` sets a fit's random draws (0 reproduces every result above). Restarts on one
   pair measure the method's own variance and are summarised, not counted as independent samples.

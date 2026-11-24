@@ -18,7 +18,7 @@ taught us.
 
 ## Where we are now
 
-*(Updated as the work moves on. Last updated after experiment 54.)*
+*(Updated as the work moves on. Last updated after experiment 55.)*
 
 - Both trained models work. The language model holds the world's state (readable at about 97%),
   and the frame model predicts whole next frames almost perfectly.
@@ -35,13 +35,13 @@ taught us.
   statistics, carries the alignment.
 - **The clean confirmation passed** (experiments 49-51). With the method frozen and no truth
   used, it selects the true matching on pairs 0 and 1, and then on the fresh pair 2, run once:
-  **70% of held-out frames exactly right** on pair 2 (64.6% on pair 0, 43.8% on pair 1), with the
-  predicted agent swap. On pair 2, raw counts alone would have picked a wrong matching.
-- **The pilot's alignment gate is met** (experiment 53). Mean across the three pairs: 59.5% of
+  **70.1% of held-out frames exactly right** on pair 2 (64.7% on pair 0, 44.0% on pair 1, scored
+  as in experiment 55), with the predicted agent swap. On pair 2, raw counts alone would have picked a wrong matching.
+- **The pilot's alignment gate is met** (experiments 53 and 55). Mean across the three pairs: 59.6% of
   frames exactly right for the method, 52.6% with a lookup table in place of the frame model, and
   0.8% for the no-neural-model co-occurrence control. Both trained models earn their place, and
   the language model is essential.
-- **Variance estimates are in hand** (experiment 54): restarts within a pair vary by about 2.7
+- **Variance estimates are in hand** (experiments 54 and 55): restarts within a pair vary by about 2.7
   points (standard deviation), pairs by about 15.8 points around a mean of 60%. Almost all the
   variation is between pairs, as the proposal's unit of analysis assumes. **Both parts of the
   pilot gate are met.**
@@ -1113,3 +1113,35 @@ so from here on the frame side is the trained frame model.
     language model does that is itself something the main phase should measure.
   - With this, both parts of the pilot gate are met: alignment beats the co-occurrence control
     (entry 53), and variance estimates are in hand.
+
+### Session 5: reporting
+
+**55. Correction: one accuracy measure for every result.**
+- *Why:* while exporting the pilot results for the website, the method's numbers in entries 49-54
+  didn't match the score files exactly (pair 1: 43.8% in the log, 44.0% in the file).
+- *How:* compared the two measures the score files hold.
+  - *Up to symmetry* (the proposal's measure, "accuracy modulo the symmetry group"): a decoded
+    frame counts as right if it equals the true frame under any of the world's symmetries, here
+    either order of the two agents.
+  - *Under one labelling:* right only under the single agent order that agrees best overall.
+  - The two differ only on frames where both agents are in the same state.
+  - Entries 49-51, 53 and 54 reported the method under one labelling, but entry 53's two controls
+    up to symmetry, so its table mixed the two. Everything was rescored up to symmetry, including
+    restarts 1 and 2 (from their saved predictions), with
+    `scripts/export_site_data.py`.
+- *Result:* (frames exactly right, up to symmetry)
+
+  | | Pair 0 | Pair 1 | Pair 2 | Mean |
+  |---|---|---|---|---|
+  | Method | 64.7% | 44.0% | 70.1% | 59.6% |
+  | Lookup table in place of the frame model | 61.9% | 32.9% | 63.0% | 52.6% |
+  | Co-occurrence control | 0.8% | 1.0% | 0.6% | 0.8% |
+  | Restarts (seeds 0, 1, 2) | 64.7, 69.2, 70.9 | 44.0, 41.8, 40.1 | 70.1, 67.3, 73.1 | |
+
+  Spread within a pair: 2.7 points; between pairs: 15.8 points, around a mean of 60.1%.
+- *Meaning:*
+  - **Nothing changes in substance.** The method's figures rise by at most 0.2 points, the
+    controls are as reported, and the variance figures are the same to one decimal place.
+  - From here on, every result is reported up to symmetry, as the proposal defines it, unless an
+    entry says otherwise. The per-labelling figures stay in the score files (`by_symmetry`),
+    since they show which way each pair swapped the agents.
