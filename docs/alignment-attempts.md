@@ -18,7 +18,7 @@ taught us.
 
 ## Where we are now
 
-*(Updated as the work moves on. Last updated after experiment 47.)*
+*(Updated as the work moves on. Last updated after experiment 54.)*
 
 - Both trained models work. The language model holds the world's state (readable at about 97%),
   and the frame model predicts whole next frames almost perfectly.
@@ -33,10 +33,20 @@ taught us.
 - **Purity so far:** without the language model's summaries, alignment falls to chance even
   with the better word model (experiments 43 and 45). The trained language model, not raw word
   statistics, carries the alignment.
-- **Running now** (rules fixed in advance in experiment 46): the frozen method end to end on
-  pairs 1 and 0, then, only if both select the true matching, a single untouched run on the
-  fresh pair 2. Then the remaining purity checks: counted transitions instead of the frame model,
-  and the agent-order tie.
+- **The clean confirmation passed** (experiments 49-51). With the method frozen and no truth
+  used, it selects the true matching on pairs 0 and 1, and then on the fresh pair 2, run once:
+  **70% of held-out frames exactly right** on pair 2 (64.6% on pair 0, 43.8% on pair 1), with the
+  predicted agent swap. On pair 2, raw counts alone would have picked a wrong matching.
+- **The pilot's alignment gate is met** (experiment 53). Mean across the three pairs: 59.5% of
+  frames exactly right for the method, 52.6% with a lookup table in place of the frame model, and
+  0.8% for the no-neural-model co-occurrence control. Both trained models earn their place, and
+  the language model is essential.
+- **Variance estimates are in hand** (experiment 54): restarts within a pair vary by about 2.7
+  points (standard deviation), pairs by about 15.8 points around a mean of 60%. Almost all the
+  variation is between pairs, as the proposal's unit of analysis assumes. **Both parts of the
+  pilot gate are met.**
+- **Next:** decide with the user on the open issues below, then the pilot write-up and the
+  literature check (phase 2).
 - **Open issues for the proposal:**
   - *Change of method.* The proposal names representation-level alignment (vec2vec-style,
     quadratic assignment). Those failed here (experiments 1-20). Decipherment uses the frame
@@ -49,9 +59,9 @@ taught us.
   - *Hand-built scaffolding.* Structure discovery (one-of-n blocks, the "acted" flags, word types
     from suffixes) and the role tables encode knowledge of how this world and language are
     formatted. No truth goes in, but it limits how general the method is.
-  - *Easy on counts.* In this world, raw word counts already rank the true matching first
-    (experiments 19, 37 and 42), which makes the matching search easier than it may be in
-    richer worlds.
+  - *Easy on counts.* On pairs 0 and 1, raw word counts already rank the true matching first
+    (experiments 19, 37 and 42). On pair 2 they didn't, and the models still found it
+    (experiment 51), but the shortlist still relies on counts to cut 144 matchings to 6.
   - *Pair 1 is a tuning pair.* The method was changed after seeing it, so it doesn't count as a
     confirmation. Pair 2 is the confirmation.
 
@@ -898,3 +908,209 @@ so from here on the frame side is the trained frame model.
 - *Meaning:* even with good early guesses, a summary model with 630 inputs fits the guesses'
   mistakes too, and confirms them. A summary model learned from its own decoding has to be
   simple. Pairwise inputs stay in the code as an option but are not part of the method.
+
+**48. Pair 2's two models.**
+- *Why:* pair 2 is the fresh pair for the clean confirmation (entry 46). It needs its own two
+  models, trained from scratch on its own streams.
+- *How:* corpus generated with `python -m grounding.data.make configs/pilot.yaml --pairs 2`
+  (50,000 episodes per stream, root seed 2), then the same training settings as pairs 0 and 1:
+  the predictive-state language model (60-minute limit) and the joint-head frame model
+  (20,000 steps).
+- *Result:* language model held-out loss **0.826** (best step 34,000 of 41,450; pair 0: 0.826,
+  pair 1: 0.825). Frame model validation loss **0.048** (pair 1: 0.047).
+- *Meaning:* all three pairs' models are trained to the same standard, so differences between
+  pairs come from the pairs themselves. Nothing on pair 2 has been aligned or scored yet.
+
+**49. The frozen method end to end on pair 1.**
+- *Why:* step 3 of entry 46. Entries 44-47 gave the method the true matching. Here it must find
+  the matching itself, with no truth used, through the shortlist and the selection.
+- *How:* `python -m grounding.align.decipher runs/pilot/pair-001 --name decipher-v2` with the
+  frozen config (`emission: sentence`, `summary_features: linear`). Shortlist of 6 by raw counts,
+  each fitted (512 episodes, 12 iterations), selected by own score on 128 selection episodes
+  (2 seeds). 68 minutes. Checked against the truth afterwards.
+- *Result:*
+
+  | Finalist | Matching (from the truth check) | Selection score | Gap to the truth |
+  |---|---|---|---|
+  | **1** | **true** | **18.42** | **0** |
+  | 5 | stone ↔ apple | 18.09 | -0.33 |
+  | 4 | full place mirror | 17.94 | -0.49 |
+  | 2 | river ↔ hill | 17.34 | -1.09 |
+  | 3 | bush ↔ cave | 16.99 | -1.43 |
+  | 6 | stone ↔ apple and river ↔ hill | 16.87 | -1.55 |
+
+  Seed-to-seed spread: 0.27 for finalist 1, 0.03-0.08 for the others. **Selected: finalist 1, the
+  true matching.** Under it, on all 300 held-out episodes: **43.8% of frames exactly right** (with
+  the agents swapped: the predicted symmetry), agent places 0.96-0.97, hunger 0.96-0.97, glass /
+  stone / apple 0.74 / 0.78 / 0.80.
+- *Meaning:*
+  - The method now works on pair 1 end to end, without the truth. Half of the gate for pair 2 is
+    passed.
+  - The closest rivals are the ones the world predicts: the object swap, because objects are
+    pair 1's weak point, and the full place mirror, the near-symmetry broken only by eating at the
+    bush. The margin over the object swap (0.33) is about 1.2 times finalist 1's own seed spread,
+    so on this pair the selection is right but not by a wide margin.
+
+**50. The frozen method end to end on pair 0, and the gate.**
+- *Why:* steps 3 and 4 of entry 46: the new method must also find pair 0's matching by itself,
+  and pair 2 may run only if both pairs select the true matching.
+- *How:* as entry 49, on pair 0 (67 minutes). Then `gate.py` compared each pair's selected
+  matching with the true one and scored both.
+- *Result:*
+
+  | Finalist (pair 0) | Selection score | Gap to the truth |
+  |---|---|---|
+  | **1: true** | **19.29** | **0** |
+  | 4 | 18.81 | -0.48 |
+  | 5 | 18.79 | -0.50 |
+  | 3 | 18.17 | -1.12 |
+  | 2 | 17.84 | -1.45 |
+  | 6 | 17.67 | -1.62 |
+
+  **Selected: finalist 1, the true matching.** Under it, on all 300 held-out episodes: **64.6% of
+  frames exactly right** (agents swapped), agent places and hunger 0.97, glass / stone / apple
+  0.88 / 0.93 / 0.92. Gate output: "pair-000: true matching YES; pair-001: true matching YES;
+  GATE PASSED: pair 2 queued".
+- *Meaning:*
+  - The frozen method finds the true matching on both pairs without the truth, so pair 2 runs.
+  - The new word model costs pair 0 about 10 points (75.3% with the old one, entry 40), in return
+    for working on pair 1 at all (0.5% to 43.8%). A method that works on both pairs is worth more
+    than one that fits pair 0's luck.
+  - On both pairs the closest rivals sit about 0.3-0.5 below the truth. The selection is right,
+    but its margin is modest.
+
+**51. Pair 2: the clean confirmation.**
+- *Why:* step 5 of entry 46. Pair 2 is a fresh pair the method had never seen, run once with the
+  method frozen. This is the pilot's first confirmation that doesn't depend on any choice made
+  after seeing the pair.
+- *How:* `python -m grounding.align.decipher runs/pilot/pair-002 --name decipher-v2` (67 minutes),
+  then `python -m grounding.analysis.score runs/pilot/pair-002 --kind decipher --name decipher-v2`,
+  both run automatically by the queue after the gate. No finalist was checked against the truth
+  before the scoring. The matching check below was done after the scoring, for the record.
+- *Result:*
+
+  | Finalist | Raw-count rank | Objects | Places | Selection score |
+  |---|---|---|---|---|
+  | 1 | 1st (0.1805) | right | wrong | 17.51 |
+  | **2** | **2nd (0.1808)** | **right** | **right** | **19.27** |
+  | 3 | 3rd | right | wrong | 18.81 |
+  | 4 | 4th | right | wrong | 17.63 |
+  | 5 | 5th | wrong | wrong | 17.26 |
+  | 6 | 6th | wrong | right | 18.61 |
+
+  **Selected: finalist 2, the true matching**, 0.46 ahead of the runner-up. Scored on all 300
+  held-out episodes: **70.1% of frames exactly right** allowing for the agent swap (the agents
+  came out swapped); chance 0.02%. Against the swapped truth: agent places 0.98, hunger 0.97,
+  glass / stone / apple 0.89 / 0.97 / 0.91.
+- *Meaning:*
+  - **On a fresh pair, with no paired data and no truth, the two trained models decode 70% of
+    held-out sentences into exactly the right world state.** The only systematic confusion is the
+    agent swap, which is the symmetry the proposal predicts (with the caveat in technical
+    decision 19 that the agents' order is fixed by construction).
+  - **Raw counts alone would have chosen wrong here:** they ranked a place swap first. The
+    separately fitted models chose the truth. This partly answers the concern that the pilot
+    world is "easy on counts": on this pair, counting wasn't enough.
+
+**52. Purity: what each trained model contributes, and the agent-order tie.**
+- *Why:* the proposal's claim is about what the two *trained models* learned, so each one has to
+  earn its place. And the agent order is fixed in the search (technical decision 19), so the
+  evidence should score both orders the same.
+- *How:* pair 1, true matching, 512 episodes, 12 iterations, `emission: sentence`. Each trained
+  model switched off in turn:
+  - the frame model replaced by `frame_model: counts`: next frames drawn from the frame stream's
+    own counted transitions out of the current frame, with no neural network (the nearest seen
+    frame where a frame was never seen);
+  - the language model's summaries switched off, leaving only the raw words.
+
+  And the normal setup with the agents' order flipped (`agents=swap`). A first attempt at the
+  counted runs crashed (integer matrix multiplication isn't supported on the GPU); fixed and
+  rerun.
+- *Result:*
+
+  | Pair 1, true matching | Summaries on | Words only |
+  |---|---|---|
+  | **Trained frame model** | **43.0%** (fit 18.51) | 0.2% |
+  | **Counted transitions** | 37.0% (fit 17.63) | 1.8% |
+
+  Agents' order flipped: fit **18.52** against 18.51 in the normal order, 31.6% of frames exactly
+  right (agent places 0.97-0.98, hunger 0.96, objects 0.63-0.76). The counted runs took about 2
+  minutes each, against about 11.
+- *Meaning:*
+  - **The language model is essential.** Without its summaries, alignment is at chance whichever
+    frame side is used.
+  - **The frame model, in this world, improves the fit but adds little accuracy** over a lookup
+    table of the frame data. The pilot world is small enough to enumerate: the table holds 49,219
+    distinct frames, so it already knows almost every transition. The pilot can't show the frame
+    model earning its place; that needs the richer worlds of the main phase, where a table can't
+    cover the states.
+  - **The two agent orders tie** (a difference of 0.01, within noise). The evidence genuinely
+    can't tell the agents apart, as predicted. The 12-point difference in frames exactly right
+    comes from run-to-run variation in the objects, not the agents. Restarts within one pair vary
+    this much, which matters for the variance estimates the pilot gate asks for.
+  - Next: both counted versions as full pipelines on all three pairs. Counted transitions with
+    words only is the proposal's no-neural-model co-occurrence control, which the method has to
+    beat (entry 53).
+
+**53. The controls as full pipelines on all three pairs.**
+- *Why:* the pilot gate asks that alignment beat the co-occurrence baseline. Entry 52 compared the
+  models under the true matching on one pair; this runs each control the way the method runs,
+  finding its own matching with no truth, on every pair.
+- *How:* `python -m grounding.align.decipher` with two control configs, then scoring:
+  - `configs/pilot-decipher-baseline.yaml`: **no neural model.** Counted transitions instead of
+    the frame model, and no language model (raw words only). This is the co-occurrence control:
+    raw word statistics against raw frame statistics, through the same word model and search.
+  - `configs/pilot-decipher-counts.yaml`: counted transitions instead of the frame model, with the
+    language model's summaries.
+
+  About 8-9 minutes per pair each. Running the controls on pair 2 doesn't change or tune the
+  method.
+- *Result:* (frames exactly right on 300 held-out episodes, allowing for the agent swap)
+
+  | | Pair 0 | Pair 1 | Pair 2 | Mean |
+  |---|---|---|---|---|
+  | **Method:** trained frame model + language model | **64.6%** | **43.8%** | **70.1%** | **59.5%** |
+  | Counted transitions + language model | 61.9% | 32.9% | 63.0% | 52.6% |
+  | No neural model (counted transitions + raw words) | 0.8% | 1.0% | 0.6% | 0.8% |
+  | Chance (shuffled predictions) | 0.03% | 0.02% | 0.02% | |
+
+  Every version selected the true matching on every pair.
+- *Meaning:*
+  - **The pilot's alignment gate is met:** the method beats the co-occurrence control on all three
+    pairs, by 43 to 69 points.
+  - **Both trained models earn their place.** Without the language model, decoding collapses to
+    about 1%. The trained frame model adds 2.7, 10.9 and 7.1 points over a lookup table, positive
+    on every pair, even in a world small enough to enumerate. (Entry 52's single comparison under
+    the true matching was too noisy to show this.)
+  - The raw words are enough to pick the right matching in this world, but not to decode states.
+    Matching words to entities is the easy part here; reading the state of the world from a
+    sentence is what needs the trained language model.
+
+**54. Variance: restarts within a pair against differences between pairs.**
+- *Why:* the pilot gate asks for variance estimates for the power analysis. The proposal's unit of
+  analysis is an independent pair, with restarts summarised rather than counted, so the question
+  is how much results vary between restarts on one pair compared with between pairs.
+- *How:* a new `seed` setting for a fit's random draws (seed 0 reproduces every earlier result).
+  On each pair, the selected matching (the true one on every pair) refitted with seeds 1 and 2,
+  512 episodes, 12 iterations, scored on the same 300 held-out episodes as the full runs. Seed 0
+  is the full run's own result (entries 49-51). Running this on pair 2 measures the method; it
+  doesn't change it.
+- *Result:* (frames exactly right, allowing for the agent swap)
+
+  | Pair | Seed 0 | Seed 1 | Seed 2 | Mean | Standard deviation |
+  |---|---|---|---|---|---|
+  | 0 | 64.6% | 69.1% | 70.8% | 68.2% | 3.2 |
+  | 1 | 43.8% | 41.6% | 39.8% | 41.7% | 2.0 |
+  | 2 | 70.1% | 67.2% | 73.0% | 70.1% | 2.9 |
+
+  Pooled spread within a pair: **2.7 points**. Spread of the pair means: **15.8 points**, around a
+  mean of 60.0%. (Entry 52's flipped-agent run on pair 1, 31.6%, is the one outlier; it also
+  changes the random draws.)
+- *Meaning:*
+  - **Almost all the variation comes from the pair** (its corpus and its two trained models), not
+    from the aligner's randomness. That matches the proposal's design: the power analysis must
+    count independent pairs, and extra restarts add little.
+  - Pair 1 is consistently harder (about 42%), because its language model stores object
+    positions in a form the straight-line summary model can't read (entry 42). How often a pair's
+    language model does that is itself something the main phase should measure.
+  - With this, both parts of the pilot gate are met: alignment beats the co-occurrence control
+    (entry 53), and variance estimates are in hand.

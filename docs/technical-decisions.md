@@ -218,7 +218,7 @@ give either: they can't say "if agent A acted, then A's place changed, not B's".
 
 ## 19. Alignment by decipherment on the two trained models
 
-From the third pilot session (experiment log, entries 21-46). `python -m grounding.align.decipher
+From the third pilot session (experiment log, entries 21-53). `python -m grounding.align.decipher
 runs/pilot/pair-001` aligns a pair, and `python -m grounding.analysis.score runs/pilot/pair-001
 --kind decipher` scores it, with settings from `configs/pilot-decipher.yaml` (`align/decipher.py`,
 `align/structure.py`).
@@ -266,6 +266,10 @@ runs/pilot/pair-001` aligns a pair, and `python -m grounding.analysis.score runs
   (entries 1-20). Decipherment uses the frame model as a generator of frame histories rather than
   for its hidden representations, and uses the raw words as well as the language model's
   summaries. This must be raised as a change to the proposal before the main phase.
-- **No neural model baseline:** `frame_model: counts` replaces the frame model with counted
-  transitions from the frame stream (nearest seen frame where unseen), for the co-occurrence
-  control.
+- **Controls:** `frame_model: counts` replaces the frame model with counted transitions from
+  the frame stream (nearest seen frame where unseen). `configs/pilot-decipher-baseline.yaml` (counted
+  transitions, no language model) is the co-occurrence control; `configs/pilot-decipher-counts.yaml`
+  keeps the language model. On the three pilot pairs: method 59.5% of frames exactly right on
+  average, without the frame model 52.6%, co-occurrence control 0.8% (entry 53).
+- **Restarts:** `seed` sets a fit's random draws (0 reproduces every result above). Restarts on one
+  pair measure the method's own variance and are summarised, not counted as independent samples.

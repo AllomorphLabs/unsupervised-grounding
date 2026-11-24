@@ -74,6 +74,7 @@ class DecipherConfig:
     freeze_mixture: int = 8  # iteration from which the mixture weights stay fixed
     update_paths: int = 8  # particle paths per episode used in each update
     shortlist: int = 6
+    seed: int = 0  # restart seed for a fit's random draws; restarts measure variance
 
     @classmethod
     def from_yaml(cls, path: Path) -> DecipherConfig:
@@ -228,7 +229,7 @@ class CountedFrames:
         d = f0.shape[1]
         self.dev, self.chunk = device, chunk
         self.bits = 2 ** torch.arange(d, device=device, dtype=torch.int64)
-        code0 = torch.tensor(f0, device=device) @ self.bits
+        code0 = (torch.tensor(f0, device=device).long() * self.bits).sum(1)
         order = torch.argsort(code0)
         self.f0 = torch.tensor(f0, dtype=torch.float32, device=device)[order]
         self.f1 = torch.tensor(f1, dtype=torch.float32, device=device)[order]
@@ -247,7 +248,7 @@ class CountedFrames:
         return frames
 
     def _source(self, h: torch.Tensor) -> torch.Tensor:
-        code = h.long() @ self.bits
+        code = (h.long() * self.bits).sum(1)
         idx = torch.searchsorted(self.codes, code).clamp(max=len(self.codes) - 1)
         miss = torch.nonzero(self.codes[idx] != code).flatten()
         for i in range(0, len(miss), self.chunk):
@@ -451,7 +452,7 @@ class Fit:
         wc[[D.lang.words.index(STOP), D.lang.words.index(EPISODE)]] = 0  # never inside a sentence
         unigram = torch.tensor(wc / wc.sum(), dtype=torch.float32, device=dev)
         own = ((self.tying_[1] == 0) | (self.tying_[1] == 2) | (self.tying_[1] == 4)).float()
-        gen = torch.Generator(device=dev).manual_seed(0)
+        gen = torch.Generator(device=dev).manual_seed(D.cfg.seed)
         noise = 1 + 0.1 * torch.rand(J, 3 * d + 1, V, device=dev, generator=gen)
         cnt = (1 + D.cfg.own_prior * own)[None] * noise
         lam = torch.tensor([0.45, 0.25, 0.2, 0.1], device=dev)[None].repeat(J, 1)
@@ -683,7 +684,7 @@ class Fit:
     def fit(self, batches: list[Batch], log=print) -> None:
         t0 = time.time()
         for it in range(self.D.cfg.iterations):
-            paths, ll = self.run(batches, seed=it)
+            paths, ll = self.run(batches, seed=it + 1000 * self.D.cfg.seed)
             self.update(paths, it)
             log(
                 f"    iteration {it + 1}/{self.D.cfg.iterations}: "
@@ -691,11 +692,12 @@ class Fit:
             )
 
     @torch.no_grad()
-    def decode(self, batches: list[Batch], seed: int = 0):
+    def decode(self, batches: list[Batch], seed: int | None = None):
         """The commonest particle frame at every sentence end, with its token position."""
         bits = 2 ** torch.arange(self.D.d, device=self.D.dev, dtype=torch.int64)
         N = self.D.cfg.particles
         frames, positions = [], []
+        seed = 1000 * self.D.cfg.seed if seed is None else seed
         for b, traj, _ in self.run(batches, seed)[0]:
             Tm, Be = b.real.shape
             code = (traj.long() * bits).sum(-1).reshape(Be, N, Tm)
