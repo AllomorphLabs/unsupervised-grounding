@@ -1,9 +1,11 @@
 # Proposed proposal edits: grid-video pilot (phase 3, steps 1 and 2)
 
-*For approval. Nothing here has been applied to [proposal.md](proposal.md). Each item says what
-the evidence is (experiment log entries 56-64) and what would change.*
+*Each item says what the evidence is (experiment log entries 56-80) and what would change. Items
+1, 2, 4, 7 and 8 were applied to [proposal.md](proposal.md) on 25 November; 5 and 6 stay open.*
 
 ## 1. Say how grid video is drawn, and what that does to symmetry
+
+**Applied (25 November).**
 
 **Evidence:** entries 56-57. The renderer draws each place as a patch of cells, each thing in a
 random free cell of its patch, a carried object in its carrier's cell, and nothing that marks who
@@ -16,6 +18,10 @@ assigned at random per pair, so interchangeable agents differ only by an arbitra
 symmetry.
 
 ## 2. Replace "Structure supplied to the aligner" with what is now done
+
+**Applied (25 November)**, for both formats: state vectors now have their own statistics-only
+parser (entry 67), so no [TBD] is left. The assumptions the procedures build in are stated
+(technical decision 24).
 
 **Evidence:** entries 58-59. For grid video, the frames' structure (places, things, appearances,
 carrying) and the words' kinds are found from each stream alone, with no hand-written parser and
@@ -46,6 +52,8 @@ written.)
 
 ## 4. Add impossible candidate frames to the threats to validity
 
+**Applied (25 November).**
+
 **Evidence:** entry 62. The grid frame model's own rollouts drift into impossible frames: only 14%
 of 40-step rollouts stay valid throughout, against 99.6% valid single samples for the pilot's
 state-vector model.
@@ -68,6 +76,9 @@ cause.
 
 **Decided (25 November):** grid video stays unmarked; the fix comes from inside the method.
 
+**Progress (entries 69-76):** split moves teach the summary model both agents' hunger with no
+pairing, under the true matching; the full search is being tested. Still no design edit.
+
 **Edit:** none to the design yet. This is a method problem to fix before the method is frozen on
 the cipher control (phase 4). It should be listed among the open questions until it is solved.
 
@@ -78,3 +89,23 @@ for state vectors, and the search now screens 24 matchings before fitting the fi
 
 **Edit:** none yet. Revisit the compute estimate in *Work plan and resources* once the method is
 settled, since the per-pair cost of alignment has roughly doubled.
+
+## 7. Count near-symmetry confusions across pairs, not only within them
+
+**Evidence:** entries 71 and 75. On pilot state vectors with nothing hand-written, the selected
+matching was the places' mirror image: the path is symmetric end to end except for feeding at the
+bush. That is a near-symmetry confused at the level of the whole pair, which the proposal's H3
+analysis only covered within pairs.
+
+**Applied (25 November):** *Meaning up to symmetry* says a near-symmetry can be confused within a
+pair or across pairs, and that both are counted, the second like a swap rate; the H3
+near-symmetry test measures confusion at both levels.
+
+## 8. The objective diagnostic must compare equal fits
+
+**Evidence:** entries 71 and 75. Without split moves the mirrored matching fitted better than the
+right one (19.13 against 18.97-19.00); with them, the right one fitted better (19.21 against
+18.81). Which of two fits scores higher can reflect where each fit settled, not the mappings.
+
+**Applied (25 November):** step 7 (*Diagnose*) says both mappings are fitted by the same
+procedure with the same restarts.

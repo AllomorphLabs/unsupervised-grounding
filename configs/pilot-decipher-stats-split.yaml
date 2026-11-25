@@ -1,0 +1,35 @@
+# As pilot-decipher-stats.yaml, with split moves inside each fit (experiment log, entry 75):
+# after 8 of 12 iterations, the 4 weakest facts, up to 2 passes, appearances also together.
+# The pilot decipherment with nothing hand-written (phase 3, step 2; experiment log, entry 67): the
+# frozen pilot settings (configs/pilot-decipher.yaml), but with the frame structure found from the
+# frame stream's statistics alone, the words' kinds found from the language alone, and every agent
+# order searched. A shortlist of 8, so that matchings differing only in the agents' order can both
+# be fitted.
+lang_model: lang-ps
+frame_model: obs-joint
+train_episodes: 512
+select_episodes: 128
+score_episodes: 300
+batch: 64
+max_sentences: 100
+sentence_tokens: 6
+particles: 32
+candidates: 4
+iterations: 12
+own_prior: 20.0
+smooth: 0.01
+summary_power: 0.2
+summary_features: linear
+emission: sentence
+summary_from: 5
+freeze_mixture: 8
+update_paths: 8
+shortlist: 8
+structure: statistics
+word_kinds: classes
+grid_units: joint
+valid_only: true
+split_at: 8
+split_weakest: 4
+split_rounds: 2
+split_together: true

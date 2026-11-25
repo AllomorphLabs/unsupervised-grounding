@@ -18,28 +18,27 @@ taught us.
 
 ## Where we are now
 
-*(Updated as the work moves on. Last updated after experiment 74.)*
+*(Updated as the work moves on. Last updated after experiment 80.)*
 
-**Phase 3, grid video and state vectors with nothing hand-written (entries 56-74).**
-- Grid video runs end to end, with the frames' structure and the words' kinds found from each
-  stream alone (entries 56-59), and the search leaves the agents' order free.
-- The blocker was hunger: fitted from its own guesses, the summary model never learned to read
-  it, so only about 15-20% of frames decoded exactly under the true matching (entry 63). The
-  reason is that "no effect" is a local optimum of that fit (entry 69).
-- **Split moves fix it under the true matching** (entries 69-74): restarting the weakest facts
-  along the main directions of the summaries' left-over noise, scored on the summaries' own
-  distribution and the frame stream's statistics, with no pairing and grid video unmarked. Both
-  agents' hunger is read at 94-97%, and exact frames rise from 20% to 47% (oracle summary model:
-  64%). Which facts get placed depended on the order they were tried in; the procedure now tries
-  several orders and keeps the likeliest.
-- **State vectors now have a statistics-only parser** (entry 67). On pilot pair 0 it gives the
-  right structure and the right thing words, and the right reading decodes 50-60% of frames
-  exactly, but the selection prefers the places' mirror image (entry 71). The pilot's path of
-  places is symmetric end to end except for feeding at the bush, so telling the mirror apart
-  needs hunger: the same weakness.
-- **Running:** split moves inside the state-vector fits of the right and mirrored readings
-  (`stats-mirror-split`); a robustness check of split moves with three orders (`split-refine-6`);
-  then the full grid search with split moves, matching not given (`grid-split-search`). [TBD]
+**Phase 3, grid video and state vectors with nothing hand-written (entries 56-80).**
+- Both observation formats find their structure from their own statistics, and the words'
+  kinds come from the language alone; the search leaves the agents' order free.
+- **Hunger on grid video is solved under the true matching** (entries 69-76): split moves teach
+  the summary model both agents' hunger with no pairing, reliably across move orders. Exact frames
+  rise from about 20% to 37-47% (oracle summary model: 64%); the objects' places (73-88%) are
+  what is left.
+- **State vectors:** the statistics-only parser gives the right structure and thing words, but
+  the selection chose the places' mirror image, a near-symmetry broken only by feeding at the bush
+  (entry 71). The words alone, the summaries' distribution alone (entry 77) and the frame
+  model's dynamics alone (entry 80) all fail to break it; split moves inside the fit did, in a
+  direct comparison of the two readings (entry 75).
+- **Searches were slowed by GPU memory fragmentation** (entry 78), now fixed by an allocator
+  setting; faster filter and split-move code is on the `feat/perf` branch, tested on the CPU
+  (entry 79).
+- **Tuning pairs:** pilot pairs 0-2 and grid pair 0 have been used to make choices while looking
+  at the truth, so they can't confirm the method (technical decision 24).
+- **Running:** the full grid search with split moves (no truth), then the full state-vector
+  search with split moves. Grid pairs 1 and 2 are generated, with frame models queued. [TBD]
 
 **The pilot (entries 1-55).** The state of the pilot when it ended:
 
@@ -1620,8 +1619,7 @@ step that sorts frame values and words into kinds, and the search that fixed the
     breaks it (`sim/worlds.py`). So this is a near-symmetry of the world, and the only evidence
     against it comes through hunger, which the chosen fit reads at 62%. It is the same weakness
     as on grid video (entries 63-72), showing up as a wrong choice instead of wrong frames.
-  - Next: refit both readings with split moves inside the fit, and compare (`stats-mirror-split`)
-    [TBD].
+  - Next: refit both readings with split moves inside the fit, and compare (entry 75).
 
 **72. Placing both agents' hunger: the two appearances of an agent restarted together.**
 - *Why:* in entry 70, split moves taught the summary model one agent's hunger but not the
@@ -1703,3 +1701,166 @@ step that sorts frame values and words into kinds, and the search that fixed the
     (`split_orders` in decipherment). A test checks more orders never fit worse.
   - Next: check that this is robust (`split-refine-6`: three orders, one round), then put split
     moves into the full grid search, where the matching isn't given. [TBD]
+
+**75. With split moves inside the fit, the selection prefers the right places over their mirror.**
+- *Why:* entry 71: on state vectors with nothing hand-written, the selection score preferred the
+  places' mirror image.
+- *How:* `runs/queue/stats_mirror_split.py`: the mirrored reading (finalist 2) and the right one
+  (finalist 4) refitted as in entry 71, but with split moves after 8 of the 12 iterations (the 4
+  weakest facts, up to 2 passes, one thing's appearances also together). Scored as entry 71's
+  re-scoring: 4 seeds on the selection episodes, and 4 on 384 extra unused training episodes.
+- *Result:*
+
+  | Reading | Without split moves (extra episodes) | With split moves (extra episodes) | With split moves (selection episodes) |
+  |---|---|---|---|
+  | Mirrored places (finalist 2) | 19.13 | 18.81 (spread 0.02) | 18.67 |
+  | Right places (finalist 4) | 18.97-19.00 | **19.21** (spread 0.01) | **19.06** |
+
+  - The weak facts here were object and agent positions, not hunger, whose effects were already
+    large. In each fit only one split move improved the summary-model fit, and by little
+    (0.001-0.01).
+  - The particle fit dips sharply in the iteration after the split moves (to -7.8 and -3.0), then
+    recovers within an iteration, to a higher fit for the right reading and a lower one for the
+    mirror.
+- *Meaning:*
+  - **The right reading now wins by 0.4, about 20 times the spread between seeds.** If this holds
+    across all finalists, the statistics-only state-vector decipherment selects correctly.
+  - But the mechanism isn't the one expected. The split moves barely changed the summary model,
+    so the gain seems to come from the jolt to the fit: refitted from a summary model fitted to
+    the summaries' distribution, the paths re-settle. One pair, two readings; it needs the full
+    search to count (`stats-split-search`, queued after the grid search). [TBD]
+  - A test of selection by the summaries' distribution alone, without words, is entry 77.
+
+**76. Split moves in several orders: both agents' hunger again, reliably.**
+- *Why:* entries 73 and 74 differed only in the order the weak facts were tried, and one of them
+  read only one agent's hunger.
+- *How:* `split-refine-6`: as entry 74 (grid pair 0, true matching, diagnostic), with the split
+  moves run in three orders of the weak facts (as found, reversed, shuffled), keeping the likeliest
+  fit; one round, then 4 particle iterations.
+- *Result:*
+  - The weak facts were the two agents' four appearances. All three orders ended at nearly the same
+    fit (113.20, 113.18, 113.20); the joint move on one agent's two appearances gave the largest
+    single gain (112.46 to 113.20) in two of them.
+  - Hunger flip test: 68% / 64% before, 96% / 94% after the split moves, 96% / 97% after the 4
+    particle iterations. Decoded hunger 93% / 97%, agent places 97% / 96%.
+  - Exact frames (modulo swap): 17.4% before, 21.3% after the split, **37.1%** after the 4 particle
+    iterations (entry 74: 46.7%). Objects: glass 76%, stone 81%, apple 73% (entry 74: 79%, 88%,
+    80%).
+- *Meaning:*
+  - **Learning both agents' hunger is now reliable**, and with no pairing: every order found it.
+  - Exact frames vary by about 10 points between runs (37% and 47%), all of it in the objects'
+    places, which are now the main thing between grid video and the oracle's 64%.
+
+**77. The summaries' distribution alone can't tell the places from their mirror.**
+- *Why:* a cheaper, more direct selection score: each finalist's summary model maps frame units to
+  summaries, and can be scored on the summaries' distribution against the frame stream's
+  statistics, with no words. A mirrored reading should leave a mirrored summary model.
+- *How:* `runs/queue/latent_select.py` on entry 71's 8 finalists (pilot pair 0, statistics-only
+  parser): each finalist's summary model scored as it was left (one step of entry 69's
+  distribution-only fit), and after refitting it from there (60 iterations), on 20,000 summaries
+  and the 48,372 unit combinations covering 99.9% of training frames.
+- *Result:*
+
+  | Finalists | Places | Score as left | After refitting |
+  |---|---|---|---|
+  | 4, 5 | right | 112.93, 112.19 | 121.89, 122.40 |
+  | 2, 3 | mirrored | 112.01, 112.86 | 122.36, 122.43 |
+  | 0, 1, 6, 7 | one pair swapped | 108.18-108.30 | 120.79-122.37 |
+
+- *Meaning:*
+  - As left, the score rejects the readings with one pair of places swapped by about 4, but it
+    can't separate the right places from the mirror. After refitting, it separates nothing: the
+    refit reaches different local optima, and agent-swapped twins differ by up to 1.2.
+  - The frame stream's statistics barely break the mirror either: it is a near-symmetry of the
+    frames, as H3 expects. What breaks it is feeding at the bush, and the words have to carry
+    that. This is why split moves inside the word fit helped (entry 75) and this doesn't.
+    Distribution-only selection is dropped.
+
+**78. Searches were slowed by GPU memory fragmentation, not by the method.**
+- *Why:* tonight's grid search ran some screens 2-3 times slower than others, with nothing else
+  using the GPU (after the thermal slowdown was fixed by raising the laptop).
+- *How:* Windows' per-process GPU memory counters; then `runs/queue/mem_probe.py`, one particle
+  filter pass on grid pair 0 (64 episodes, 79 sentence steps) comparing the memory actually in use
+  with the memory PyTorch reserved.
+- *Result:*
+  - The search held 7.7 GB of the card's 8 GB and **another 6.2 GB spilled into system memory**,
+    which the GPU reaches far more slowly.
+  - One filter pass used at most 1.35 GB but reserved **13.5 GB**. The filter re-runs the frame
+    model on histories one frame longer at every step, and PyTorch's cache can't reuse a freed
+    block for a larger request, so it keeps asking for more. With
+    `PYTORCH_CUDA_ALLOC_CONF=garbage_collection_threshold:0.6,roundup_power2_divisions:8` the same
+    pass reserved 4.8 GB. The setting changes only where tensors are placed, not what is computed.
+  - Running the probes beside the search made it run out of GPU memory and crash at screen 12
+    (20:42). It was restarted with the setting (`grid-split-search-2`), and held 3.6-4.5 GB with
+    nothing spilled; its first screen took 4 minutes.
+  - The restart's first screen scored 45.01 against 44.93 in the crashed run, with the same seeds:
+    some GPU operations add in a varying order, so reruns differ slightly. This is within restart
+    noise.
+- *Meaning:*
+  - Long runs now set the allocator option, and nothing else runs on the GPU beside a search.
+  - The fragmentation comes from recomputing the whole history at every step, which caching the
+    frame model's attention would remove (a speed-up already proposed).
+
+**79. Faster particle filter and split moves, with the same results.**
+- *Why:* a grid search takes about 9 hours, and the work ahead needs many of them. Done on a
+  separate branch (`feat/perf`, its own worktree) so tonight's running searches were untouched,
+  and tested on the CPU only.
+- *How:* each change checked against outputs recorded from the current code, on a tiny grid pair
+  and on small batches of grid pair 0 and pilot state-vector pair 0: the frame sampler on fixed
+  inputs, two particle-filter passes (without and with a summary model), and a short fit with
+  split moves. The recorded outputs reproduce themselves exactly, so any difference is the change.
+  1. *The frame sampler* builds its per-value plan (which hidden units to compute at each value,
+     with their weights) once and keeps it while the weights are unchanged, instead of on every
+     call. Building it made the CPU wait for the GPU about 480 times per call on grid video.
+  2. *In the filter loop:* each frame's unit view computed once per step (it was computed up to
+     four times); word-table look-ups done once per sentence and copied to its particles and
+     candidates; constants and checks moved out of the loop.
+  3. *Cached context* (`context_cache`, off by default): the frame model's keys and values kept
+     for each particle's history, so a step puts only the new frame through the model instead of
+     the whole history. Resampling copies the cache with the particles.
+  4. *Split moves:* at temperature 1, the responsibilities reuse the log-sum-exp already made for
+     the likelihood instead of a second pass over the summaries x views matrix; the likelihood is
+     summed on the device and read once.
+- *Result:*
+  - Changes 1 and 2 give **bit-for-bit identical** outputs on all three cases. All 180 tests pass.
+  - Change 3: the cached context matches the full recompute to within 2e-6 (values of typical
+    size 0.8). Every path and likelihood in the three cases came out identical, because the
+    context is used only to sample 0/1 frames, and differences this small changed no sample.
+    CPU time: grid pair 0 21.2 s to 16.3 s, state vectors 9.3 s to 3.8 s.
+  - Change 4: 30-35% faster on a synthetic problem (split moves 26.5 s to 18.7 s); coefficients
+    agree to within 1.7e-6. A restart is kept only if it gains more than 1e-4, so a trial within
+    about 1e-5 of that line could, rarely, be decided differently.
+  - GPU timings can't be measured until the queue is empty; changes 1 and 3 are expected to gain
+    most there, since they remove waits for the GPU and the history recompute that fragmented its
+    memory (entry 78).
+- *Meaning:* changes 1 and 2 can go in as they are. Changes 3 and 4 give the same results within
+  rounding; 3 is behind a switch so that earlier runs can be reproduced exactly. Next: GPU timings
+  and one full fit compared with and without them, before they are used for new results.
+
+**80. The world's dynamics can't tell the places from their mirror either.**
+- *Why:* a selection check independent of the words: under a mirrored reading, the decoded story
+  should put eating at the wrong end of the path, which the frame model (trained on the frame
+  stream alone) should find implausible.
+- *How:* `runs/queue/dynamics_select.py` on entry 71's 8 finalists (pilot pair 0, statistics-only
+  parser, no split moves): each finalist's decoded frames for the 300 held-out episodes, compressed
+  to each episode's sequence of distinct frames, scored by the frame model's log-probability per
+  transition (about 10,500 transitions per finalist). No truth used.
+- *Result:*
+
+  | Finalists | Places | Dynamics per transition |
+  |---|---|---|
+  | 2, 3 | mirrored | -2.145, -2.144 |
+  | 4, 5 | right | -2.172, -2.157 |
+  | 0, 1, 6, 7 | one pair swapped | -2.222 to -2.237 |
+
+  The spread across episodes is 0.12-0.23, so the standard error per finalist is about 0.007-0.013.
+- *Meaning:*
+  - The dynamics reject readings with one pair of places swapped (by about 0.07), but not the
+    mirror: they prefer it slightly (by about 0.02, two to three standard errors).
+  - The mirror is a near-symmetry of the dynamics too, broken only by feeding at the bush, which
+    runs through hunger; these fits read hunger at 62%, so the one asymmetry is lost in hunger
+    errors. The words alone (entry 71), the summaries' distribution alone (entry 77) and the
+    dynamics alone all fail to break it. Split moves inside the fit did (entry 75), presumably by
+    getting hunger right. Dropped as a selection fix.
+  - For H3 this is the expected pattern: a near-symmetry is confused by every part of the method
+    that can't see what breaks it.

@@ -29,6 +29,8 @@ Status is **Decided** (code follows it), **Proposed** (current plan, not yet con
 | 21 | Frame structure and word kinds found from each stream alone | Proposed |
 | 22 | The matching search covers every order, with screening | Proposed |
 | 23 | The summary model can learn facts the fit's own paths can't teach it (split moves) | Proposed |
+| 24 | What the method assumes, and which pairs are spent on tuning | Proposed |
+| 25 | GPU memory: allocator setting for long runs | Proposed |
 
 ## 1. Python 3.15, PyTorch, uv
 
@@ -311,4 +313,18 @@ Replaces the hand-written parts of decision 19 for grid video. Experiment log, e
 - **The way out:** fit the summary model to the summaries' own distribution, with each summary coming from one combination of units weighted by how often the frame stream shows it (no pairing), and for the facts of smallest effect, restart their effect along the main directions of the left-over noise, keeping a restart only if it improves the fit. It needs the fact to be a unit of its own (`grid_units: split`).
 - **Order of the moves:** which facts get placed can depend on the order they are tried in, so the procedure runs in several orders and keeps the likeliest fit (`split_orders`). One thing's two appearances can also be restarted together (`split_together`).
 - **Status:** under the true matching on grid pair 0, split moves after 12 particle iterations, then 4 more, read both agents' hunger at 94-97% and lift exact frames from 20% to 47% (oracle summary model: 64%; entry 74). Not yet tried in the full search, where the matching isn't given; until then this stays Proposed.
+
+## 24. What the method assumes, and which pairs are spent on tuning
+
+Nothing in the method reads `hidden/`, but it isn't assumption-free. These are design knowledge, not truth, and the write-up must state them.
+
+- **The world:** frames show things that are at places, look one of a few ways, can be held by another thing, and can disappear (`align/units.py`). The parsers' thresholds (`min_hand`, `share`, `min_count`) were set on the pilot worlds.
+- **The language:** each sentence states one fact, and words fill the roles this entity, other entity, this place, other place, or none (`SentenceFit` and its tied tables). Which word classes name things and which name places is decided by class size, allowing one unnamed thing (`align/words.py`).
+- **Grid video draws hunger as a colour.** The frame stream has to show hunger for there to be anything to align; each pair's colours are random, so this can't separate the agents.
+- **Tuning pairs:** several choices were made by looking at the truth: the count profile (entry 67), split units, summary power 0.5 and the split-move settings (entries 68-76). Tuning on the pilot world is allowed (decision 4), but it spends those pairs: **pilot pairs 0-2 and grid pair 0 are tuning pairs**, and a success on them doesn't count as confirmation. Confirmation needs fresh pairs, run once with the method frozen.
+- **Defaults:** `DecipherConfig` still defaults to the pilot's hand-written versions (`structure: rules`, `word_kinds: rules`, `agent_orders: fixed`), which reproduce the pilot's results. Once the general versions pass their searches, they become the defaults.
+
+## 25. GPU memory: allocator setting for long runs
+
+Experiment log, entry 78. The particle filter re-runs the frame model on a history one frame longer at every step, and PyTorch's memory cache fragments: one pass used 1.35 GB but reserved 13.5 GB, spilling into system memory and slowing searches two to three times. Long runs set `PYTORCH_CUDA_ALLOC_CONF=garbage_collection_threshold:0.6,roundup_power2_divisions:8`, which changes where tensors are placed, not what is computed (one pass reserved 4.8 GB). Nothing else runs on the GPU beside a search. Caching the frame model's attention would remove the cause.
 
