@@ -8,18 +8,18 @@ The same proposal is also published as a Word document on the website, at `publi
 
 ## The question in one paragraph
 
-A small simulated world produces two independent data streams: descriptions in an invented language, and silent grid "videos". One model is trained on each. The two are then aligned with no paired data, and each mapping is scored against the known ground truth. The central prediction is that the remaining errors follow the world's symmetries (its automorphisms) exactly: interchangeable entities get swapped, nothing else does, and breaking a symmetry removes its confusion and changes nothing else.
+A small simulated world produces two independent data streams: descriptions in an invented language, and silent grid "videos". One model is trained on each. The two are then aligned with no paired data, and each mapping is scored against the known ground truth. The central prediction is that the remaining errors follow the world's symmetries (its automorphisms) exactly: interchangeable entities get swapped, nothing else does, and breaking a symmetry removes its confusion and changes nothing else. Near-symmetries are confused in proportion to how nearly they hold. For two models of the same data this limit is now proven (Syrota et al., 2026); our two streams share a world but no data, so the proof doesn't cover them, and the graded near-symmetry prediction is new.
 
 ## Hypotheses
 
 | | Claim | Falsified if |
 |---|---|---|
-| H1 | The language model encodes world state | Probes do no better than the grammar-only and scrambled-world controls |
+| H1 | The language model encodes world state | Probes and the continuation test do no better than the grammar-only and scrambled-world controls |
 | H2 | The two models' representations align with no paired data | Symmetry-adjusted accuracy doesn't beat the co-occurrence baseline and the scrambled-world control |
-| H3 | Remaining errors follow the world's symmetries | Errors above the noise floor fall outside the predicted symmetries, or persist after a symmetry is broken |
-| H4 | Alignment degrades gracefully as the two worlds diverge | Accuracy collapses at small divergence, or falls as worlds get richer |
+| H3 | Remaining errors follow the world's symmetries, and near-symmetries are confused in proportion to how nearly they hold | Errors above the noise floor fall outside the predicted symmetries and near-symmetries, confusion doesn't rise as violation rate falls, or a confusion persists after its symmetry is broken beyond the registered amount |
+| H4 | Alignment degrades gracefully as the two worlds diverge, including when each describes things the other lacks | Accuracy collapses at small divergence, or falls as worlds get richer |
 
-H3 is the main contribution, and H2 must hold for it to be tested.
+H3 is the main contribution, and H2 must hold for it to be tested. H4's partial-overlap case is the second new test.
 
 ## Rules from the proposal
 
@@ -52,7 +52,8 @@ Use these consistently in code and docs:
 
 - **Automorphism / symmetry group:** relabellings of agents, objects and places that commute with the dynamics. Where the dynamics are random, they must also preserve transition probabilities.
 - **Near-symmetry:** a relabelling that almost commutes with the dynamics.
-- **Violation rate:** how often relabelling and stepping disagree. This is how near-symmetries are scored.
+- **Violation rate:** how often relabelling and stepping disagree. This is the primary score for near-symmetries.
+- **Symmetry cost:** how much less likely the world's own trajectories become when relabelled. The secondary score for near-symmetries, after Xu & Kanan (2026).
 - **Noise floor:** the confusion rate measured on the symmetry-free world.
 - **Swap rate:** for an exact symmetry, how often the two entities are swapped across independent pairs. The expected value is 50%, tested for equivalence with pre-registered bounds.
 
