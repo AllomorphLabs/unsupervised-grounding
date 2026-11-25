@@ -80,3 +80,9 @@ def test_end_to_end(pair):
 def test_grid_fit_is_grid_kind(pair):
     D = GridDecipherer(pair, replace(TINY, screen=0), "cpu")
     assert isinstance(make_fit(D, D.matchings()[0]), GridSentenceFit)
+
+
+def test_split_moves_run_inside_a_fit(pair):
+    cfg = replace(TINY, screen=0, shortlist=1, iterations=3, summary_from=1, split_at=2)
+    summary = decipher_pair(pair, cfg, "cpu", name="split", log=lambda s: None)
+    assert len(summary["finalists"]) == 1

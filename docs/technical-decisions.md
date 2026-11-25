@@ -28,6 +28,7 @@ Status is **Decided** (code follows it), **Proposed** (current plan, not yet con
 | 20 | Grid video: patches for places, one cell per thing, random cells within a patch | Proposed |
 | 21 | Frame structure and word kinds found from each stream alone | Proposed |
 | 22 | The matching search covers every order, with screening | Proposed |
+| 23 | The summary model can learn facts the fit's own paths can't teach it (split moves) | Proposed |
 
 ## 1. Python 3.15, PyTorch, uv
 
@@ -292,7 +293,8 @@ Replaces the hand-written parts of decision 19 for grid video. Experiment log, e
 
 - **Frames** (`align/units.py`): places are the connected patches where anything is ever drawn; things are groups of values of which at most one is on at a time and between which a thing's presence hands over; appearances are a thing's channels. Decipherment reads each frame as units: a thing at a place (with its appearance, `grid_units: joint`, or apart from it, `split`), two things in one cell, a thing gone. It assumes only that a frame is a grid of cells with channels.
 - **Words** (`align/words.py`, `word_kinds: classes`): tokens are clustered by the distributions of their neighbours, cut at the largest jump in merge distance. Which classes name the things and places is decided by size, and every candidate reading is searched.
-- **State vectors still use the pilot's hand-written parser** (`align/structure.py`), because a shuffled vector of facts has no cells or patches from which to find places. **Open:** whether to find state-vector structure from statistics alone, or to change the comparison condition.
+- **State vectors** (`find_units_vector`, `structure: statistics`; agreed 25 November): things as above; an agent is a thing whose every change coincides with one outside value (its "acted" flag); places are found by linking a value of another thing to the value the acting agent is always in when it changes; values that change only when an agent acts are that agent's flags or "held by" it. On all three pilot pairs it recovers the hand-written parser's structure (entry 67). The pilot's parser (`structure: rules`) stays for reproducing the pilot.
+- **Counting changes for the shortlist:** a thing changes when its place changes or it disappears; this ranks the right reading of the word classes first on every pilot pair in both formats (entry 67).
 
 ## 22. The matching search covers every order, with screening
 
@@ -300,4 +302,13 @@ Replaces the hand-written parts of decision 19 for grid video. Experiment log, e
 
 - **Every order:** for grid video, any thing word may name any thing, so the agents' order is never fixed. For state vectors, `agent_orders: all` searches both agent orders; `fixed` (the default) keeps the pilot's behaviour, so its results reproduce. Matchings that differ only in the agents' order have identical raw-count profiles, so they are ranked, screened and reported side by side.
 - **Screening** (`screen`, `screen_episodes`, `screen_iterations`): raw counts alone can't separate some matchings (glass and apple, river and hill), so the closest `screen` matchings by counts each get a short fit, and the best `shortlist` by selection score get the full fit.
+
+## 23. The summary model can learn facts the fit's own paths can't teach it (split moves)
+
+`align/latent.py`; `split_at` and the other `split_` settings in `align/decipher.py`. Experiment log, entries 69-74.
+
+- **The problem:** the summary model is fitted to the fit's own paths. A fact the words don't anchor (hunger) starts with no effect, and "no effect" is a local optimum: the noise term absorbs the fact's variation, so no small change improves the fit.
+- **The way out:** fit the summary model to the summaries' own distribution, with each summary coming from one combination of units weighted by how often the frame stream shows it (no pairing), and for the facts of smallest effect, restart their effect along the main directions of the left-over noise, keeping a restart only if it improves the fit. It needs the fact to be a unit of its own (`grid_units: split`).
+- **Order of the moves:** which facts get placed can depend on the order they are tried in, so the procedure runs in several orders and keeps the likeliest fit (`split_orders`). One thing's two appearances can also be restarted together (`split_together`).
+- **Status:** under the true matching on grid pair 0, split moves after 12 particle iterations, then 4 more, read both agents' hunger at 94-97% and lift exact frames from 20% to 47% (oracle summary model: 64%; entry 74). Not yet tried in the full search, where the matching isn't given; until then this stays Proposed.
 

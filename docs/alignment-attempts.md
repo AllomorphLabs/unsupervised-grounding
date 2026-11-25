@@ -18,20 +18,28 @@ taught us.
 
 ## Where we are now
 
-*(Updated as the work moves on. Last updated after experiment 66.)*
+*(Updated as the work moves on. Last updated after experiment 74.)*
 
-**Phase 3, grid video (entries 56-66).**
+**Phase 3, grid video and state vectors with nothing hand-written (entries 56-74).**
 - Grid video runs end to end, with the frames' structure and the words' kinds found from each
   stream alone (entries 56-59), and the search leaves the agents' order free.
-- But it doesn't yet work: under the true matching only about 15% of frames decode exactly right
-  (state vectors: about 79%), and on the search's own measure a matching with all three object
-  words wrong beats the truth (entry 65). The true matching and its agent-swapped twin tie, as
-  predicted.
-- The cause is narrowed down: the summaries hold hunger, and with a summary model fitted on the
-  true frames the method reaches 64% (entry 63). Fitted from its own guesses, it never learns to
-  read hunger. Marking who acted doesn't change that (entry 66).
-- **Next:** fix how the fit learns its summary model, keeping grid video unmarked; build a
-  statistics-only parser for state vectors (decisions agreed 25 November).
+- The blocker was hunger: fitted from its own guesses, the summary model never learned to read
+  it, so only about 15-20% of frames decoded exactly under the true matching (entry 63). The
+  reason is that "no effect" is a local optimum of that fit (entry 69).
+- **Split moves fix it under the true matching** (entries 69-74): restarting the weakest facts
+  along the main directions of the summaries' left-over noise, scored on the summaries' own
+  distribution and the frame stream's statistics, with no pairing and grid video unmarked. Both
+  agents' hunger is read at 94-97%, and exact frames rise from 20% to 47% (oracle summary model:
+  64%). Which facts get placed depended on the order they were tried in; the procedure now tries
+  several orders and keeps the likeliest.
+- **State vectors now have a statistics-only parser** (entry 67). On pilot pair 0 it gives the
+  right structure and the right thing words, and the right reading decodes 50-60% of frames
+  exactly, but the selection prefers the places' mirror image (entry 71). The pilot's path of
+  places is symmetric end to end except for feeding at the bush, so telling the mirror apart
+  needs hunger: the same weakness.
+- **Running:** split moves inside the state-vector fits of the right and mirrored readings
+  (`stats-mirror-split`); a robustness check of split moves with three orders (`split-refine-6`);
+  then the full grid search with split moves, matching not given (`grid-split-search`). [TBD]
 
 **The pilot (entries 1-55).** The state of the pilot when it ended:
 
@@ -1454,3 +1462,244 @@ step that sorts frame values and words into kinds, and the search that fixed the
   - This fits the decision taken this morning: grid video stays unmarked, and the fix has to come
     from inside the method, from how the fit learns its summary model. The option `grid_actor`
     stays in the code as a diagnostic only.
+
+### Session 7: learning hunger, and state vectors with nothing hand-written
+
+**67. A statistics-only parser for state vectors.**
+- *Why:* decided this morning: state vectors, the comparison condition, should have their facts
+  sorted into kinds from the frame stream's statistics alone, replacing the pilot's hand-written
+  parser. A shuffled list of facts has no cells or patches, so places have to come from which
+  values change together.
+- *How:* `find_units_vector` in `align/units.py`:
+  - *Things* as for grid video (entry 58).
+  - A thing's *actor value* is a value outside it that is on whenever the thing changes. Two
+    things have one: they are the agents, and their actor values are the "acted" flags.
+  - *Places:* when a value of another thing changes while an agent acted, and that agent is then
+    always in the same one of its values (at least 98% of the time), the two values are linked.
+    Places are the connected groups of linked values that include agents' values.
+  - Units: a thing at a place, with an aspect separating values at the same place (0 if ever
+    seen at an episode start: intact and broken glass); a value that changes only when an agent
+    acts and isn't at a place is "held by" that agent; values outside every thing that change only
+    when an agent acts are that agent's flags (hungry, acted); anything else is "gone".
+  - Decipherment uses it with `structure: statistics`, through the same units as grid video.
+- *Result:*
+  - On all three pilot pairs it finds 5 named things, 4 places and 35 units: every agent and
+    object position, held by each agent, the apple gone, and each agent's hunger and acted flags.
+    Every real frame passes the validity check. Tests check the units against the hidden truth
+    on a small world.
+  - Ranking matchings by raw counts needed one fix. "A thing changes" now means its place changes
+    or it disappears. Three definitions were compared on the three state-vector pairs and grid
+    pair 0; this one ranks the right reading of the word classes first on all four, with the
+    largest margins (0.17-0.32). Counting every frame value of a thing put a wrong reading first
+    on grid video; counting flags too did so on state vectors.
+  - The full decipherment of pilot pair 0 with nothing hand-written: [TBD].
+- *Meaning:* [TBD]
+
+**68. Stronger summary evidence doesn't release hunger.**
+- *Why:* during fitting, the summaries' evidence is softened (raised to the power 0.2, entry 33)
+  so that it can't swamp the words. That might also leave too little pull for the fit to ever
+  start reading hunger.
+- *How:* the traced true-matching fit of entry 63 (grid pair 0, joint units, impossible
+  candidates excluded, 256 episodes, 12 iterations) at power 0.5 and at power 1.0.
+- *Result:*
+
+  | Power | Exact (iteration 12) | Agent places | Hunger | Glass | Stone | Apple |
+  |---|---|---|---|---|---|---|
+  | 0.2 (entry 63) | 15.9% | 89-91% | 73-74% | 87% | 49% | 84% |
+  | 0.5 | 17.0% (best 19.2% at 9) | 88-97% | 72-75% | 73% | 79% | 73% |
+  | 1.0 | crashed at iteration 9 (invalid particle weights) | 80-82% at 8 | 71-75% at 8 | 72% | 48% | 71% |
+
+- *Meaning:* more summary evidence speeds up the places and helps the stone, but hunger stays at
+  about 0.72 at every power, and full power is numerically unstable, as in the pilot. The
+  softening isn't what holds hunger back.
+
+**69. Why hunger can't be learned: "no effect" is a trap, and a way out.**
+- *Why:* entries 63 and 68 showed the fit never learns to read hunger, at any summary strength.
+- *How:*
+  1. *Where hunger is lost*, under oracle word tables (`runs/queue/grid_oracle_words2.py`):
+     hunger accuracy by sentence kind, and whether the decoded frames lean one way.
+  2. *Learning the summary model from distributions alone* (`align/latent.py`): every summary
+     is treated as coming from one combination of units, weighted by how often the frame stream
+     shows that combination (24,157 distinct ones on grid pair 0), and fitted by
+     expectation-maximisation with no pairing. First from a random start, then on synthetic data
+     with a known answer, to see whether it can learn a fact whose effect starts at zero.
+  3. *Split moves:* for a fact with near-zero effect, restart its effect along each of the main
+     directions of the left-over noise (both signs), refit, and keep the restart if the fit
+     improves. The bias is moved back by the fact's average contribution, which it had absorbed.
+- *Result:*
+  1. Under oracle word tables, hunger is right 64% of the time during ordinary event sentences,
+     70% at effect sentences, and 67% where it hasn't just changed. The decoded frames show agents
+     hungry 61-64% of the time, against 55-56% in truth.
+  2. From a random start the distribution-only fit reads nothing: hunger and places at chance
+     (50-55% in a two-way test). On synthetic data, a fact whose effect starts at zero *stays* at
+     zero, even when nudged: the noise term absorbs its variation, so every small step makes the
+     fit worse first. "No effect" is a local optimum, not a balance point.
+  3. Split moves escape it: on five synthetic data sets, the missing fact's effect is recovered
+     to within 0.005-0.014 (effects 0.6-1.8). Without the bias correction the effect came back
+     with its sign reversed.
+  4. A bug found on the way: the particle filter's floor on weights was 1e-300, which rounds to
+     zero in 32-bit numbers, so a sharp summary model could leave a particle with no option of
+     nonzero weight and crash the run. This likely caused entry 68's crash at full power. The
+     floor is now the smallest positive 32-bit number.
+- *Meaning:*
+  - This is the likely mechanism behind entry 63. The fit's summary model starts with no effect
+    for hunger, and no amount of evidence moves it, because the starting point is a local optimum
+    of the fit itself. Places escape only because the words give them a start.
+  - Split moves are a general way out, and the summary model needs no pairing to use them: it
+    maps frame units to summaries, whichever words name the things. They need hunger to be a fact
+    of its own, as in split units ("A drawn in the hungry colour"). In joint units it is hidden in
+    the difference between two place units.
+  - Next: split moves inside the true-matching fit on grid video (`split_at`), then, if hunger
+    becomes readable, the full search. [TBD]
+
+**70. On grid video, the summaries' own distribution teaches the summary model hunger, one agent at a time.**
+- *Why:* to try entry 69's way out on the real problem. With split units, each agent's appearance
+  (normal or hungry colour) is a fact of its own.
+- *How:* `runs/queue/grid_split_refine.py`, under the true matching (diagnostic): the particle fit
+  of grid pair 0 (split units, power 0.5, impossible candidates excluded, 256 episodes, 12
+  iterations); then the distribution-only fit (entry 69) started from its summary model, with
+  split moves on the 4 facts of smallest effect, on 20,000 summaries and the 23,735 unit
+  combinations covering 99.9% of training frames. Each agent's hunger was then tested by how
+  often the summaries prefer the true frame over the same frame with that agent's hunger flipped
+  (the oracle model of entry 63: 97%).
+- *Result:*
+
+  | | Exact frames | Agent places | Hunger (decoded) | True beats flipped: agent A / agent B |
+  |---|---|---|---|---|
+  | Particle fit, run 2 | 21.4% | 97% / 97% | 74% / 68% | 72% / 66% |
+  | After the distribution-only fit, run 2 (no fact counted as weak) | crashed | | | **95%** / 68% |
+  | Particle fit, run 3 | 18.4% | 97% / 97% | 66% / 69% | 66% / 66% |
+  | After split moves on the 4 weakest facts, run 3 | crashed | | | 60% / **97%** |
+
+  - In run 3 the 4 weakest facts were exactly the two agents' normal and hungry appearances.
+    Split moves on two of them improved the fit (110.70 to 111.16 to 112.19); the other two gave
+    no gain.
+  - The particle fit's summary model had learned a partly shared hunger direction: the two
+    agents' hunger effects point fairly similarly (cosine 0.55), a "someone is hungry" signal.
+    After the split moves the directions separate (cosine -0.24), but only one of them comes out
+    right.
+  - Decoding with the refined model crashed in both runs. Found with synchronous error
+    reporting: entry 69's float floor had been added to every option, so a particle at the end
+    of the frame model's context, or with only excluded candidates, could still move, and read
+    past its history. The floor now goes on "stay" only, which is always allowed. (Two other
+    places that could divide 0 by 0 were also given safe floors.)
+- *Meaning:*
+  - **For the first time on grid video, the fit's summary model reads an agent's hunger about as
+    well as the oracle (95% and 97%), learned from the summaries and the frame stream's statistics
+    alone,** with no pairing.
+  - But only one agent at a time: the two agents' hunger compete for the same direction in the
+    summaries. Next: alternate split moves with a few particle-fit iterations, whose paths then
+    follow the hunger already learned, and repeat (queued after the state-vector run).
+
+**71. State vectors with nothing hand-written: the right words, and a near-tie on places.**
+- *Why:* entry 67's full test. Can the pilot's state-vector pair 0 be deciphered with the facts
+  sorted by the statistics-only parser and the words sorted by the language stream's own classes?
+- *How:* `configs/pilot-decipher-stats.yaml`: the pilot's settings, with `structure: statistics`,
+  word kinds by classes, joint units, impossible candidates excluded, and the 8 readings closest
+  by raw counts fitted in full (12 iterations, 512 episodes). Agent order is free.
+- *Result:*
+  - All 8 finalists name the 5 things with the right words. They differ only in the order of two
+    pairs of place words, and in which agent is which.
+  - The selection score picked a reading with both place pairs reversed: 18.99, against 18.83
+    and 18.75 for the two readings with the right places. Those two decode 60% and 50% of frames
+    exactly (modulo the agent swap); the chosen one 0%.
+  - The same reversed reading was the runner-up in the earlier rule-based runs of this pair
+    (18.81 against the right reading's 19.29). The gap here (0.16) is smaller than the spread
+    between two scoring seeds of one finalist (up to 0.27).
+- *Meaning:*
+  - The statistics-only parser and the word classes give the decipherment everything it needs:
+    the right reading is among the finalists and, once found, decodes as well as with the
+    hand-written parser.
+  - What fails is the final choice, between two readings that the world nearly can't tell apart.
+    The rule-based fit separated them by 0.48, this one fits all readings a little differently.
+    Re-scoring the saved finalists with 6 seeds, and on 384 extra unused training episodes with
+    4 seeds (`runs/queue/rescore_finalists.py`), shows it isn't noise: on the extra episodes the
+    reversed reading scores 19.13 (spread 0.03), the right readings 18.97 and 19.00.
+  - The reversed reading is the places' **mirror image**. The pilot's places lie on a path,
+    river - bush - cave - hill, and the path is symmetric end to end; only feeding at the bush
+    breaks it (`sim/worlds.py`). So this is a near-symmetry of the world, and the only evidence
+    against it comes through hunger, which the chosen fit reads at 62%. It is the same weakness
+    as on grid video (entries 63-72), showing up as a wrong choice instead of wrong frames.
+  - Next: refit both readings with split moves inside the fit, and compare (`stats-mirror-split`)
+    [TBD].
+
+**72. Placing both agents' hunger: the two appearances of an agent restarted together.**
+- *Why:* in entry 70, split moves taught the summary model one agent's hunger but not the
+  other's. A single fact restarted on its own may not be enough: an agent's two appearances
+  (normal and hungry colour) exclude each other, so only the difference between their effects
+  means anything, and moving one alone barely changes the fit.
+- *How:* `runs/queue/joint_split_cpu.py`, on the CPU: the distribution-only fit (5,000 summaries,
+  the 21,217 unit combinations covering 98% of training frames) from run 3's particle summary
+  model; then each pair of the 4 weakest facts restarted together along two different main
+  directions of the left-over noise, every order and sign, keeping any restart that improves the
+  fit. Evaluated with entry 70's flip test (true frame against the same frame with one agent's
+  hunger flipped; oracle 97%).
+- *Result:*
+  - Start: agent A 94.6%, agent B 65.4%. The 4 weakest facts were agent B's two appearances and
+    two object positions.
+  - Restarting B's two appearances together improved the fit (112.25 to 112.81 to 112.82) and
+    brought **both agents to 94-95%**: A 94.4%, B 95.1%. None of the other 5 pairs of weak
+    facts improved the fit further.
+- *Meaning:*
+  - The first summary model, learned without pairing, that reads both agents' hunger about as
+    well as the oracle.
+  - The move needs nothing from the truth: which facts are one thing's appearances comes from
+    the frame structure. It is now an option of the split moves (`together`, and
+    `split_together` in decipherment), and a test checks it on synthetic data.
+  - Next: the same inside the true-matching particle fit on grid video, alternating with particle
+    iterations (`split-refine-5`), to see whether decoded hunger follows. [TBD]
+
+**73. Alternating single split moves with particle iterations still learns one agent's hunger.**
+- *Why:* entry 70's plan: after split moves, a few particle-fit iterations whose paths follow the
+  hunger already learned, then split moves again.
+- *How:* `split-refine-4`: grid pair 0, true matching (diagnostic), split units, power 0.5,
+  256 episodes, 12 iterations; then two rounds of split moves (the 4 weakest facts, single moves
+  only, up to 2 passes) each followed by 4 particle iterations.
+- *Result:*
+
+  | | Exact (modulo swap) | Places A / B | Hunger decoded A / B | True beats flipped A / B |
+  |---|---|---|---|---|
+  | Particle fit | | | | 66% / 66% |
+  | Round 1, split moves | 13.7% | 93% / 95% | 58% / 96% | 57% / 78% |
+  | Round 1, + 4 particle iterations | 16.2% | 96% / 96% | 62% / 97% | 60% / 97% |
+  | Round 2, split moves | 19.5% | 96% / 95% | 61% / 96% | 60% / 78% |
+  | Round 2, + 4 particle iterations | 13.2% | 95% / 95% | 61% / 97% | 61% / 78% |
+
+- *Meaning:*
+  - **Decoded hunger follows the summary model**: once it reads agent B's hunger, the decoded
+    frames get B's hunger right 96-97% of the time, up from 68%.
+  - Alternating doesn't bring in the second agent. Single moves can't place it; entry 72's joint
+    move can, and is tried inside this loop next (`split-refine-5`).
+  - Exact frames stay low (13-20%) while one agent's hunger and the objects' places (62-80%) are
+    still weak.
+
+**74. Both agents' hunger inside the fit: exact frames from 20% to 47% on grid video.**
+- *Why:* entry 73's loop, with entry 72's joint move available.
+- *How:* `split-refine-5`: as entry 73 (true matching, diagnostic), with one thing's two
+  appearances also allowed to move together. The joint move is tried only on pairs whose facts
+  both stay weak after the single moves.
+- *Result:*
+
+  | | Exact (modulo swap) | Places A / B | Hunger decoded A / B | True beats flipped A / B | Glass / stone / apple |
+  |---|---|---|---|---|---|
+  | Particle fit (12 iterations) | 20.1% | 97% / 97% | 66% / 69% | 65% / 67% | 79% / 77% / 73% |
+  | Round 1, split moves | 34.9% | 96% / 96% | 95% / 95% | 95% / 97% | 69% / 74% / 80% |
+  | Round 1, + 4 particle iterations | **46.7%** | 97% / 96% | 94% / 96% | 97% / 97% | 79% / 88% / 80% |
+  | Round 2, + 4 particle iterations | 44.6% | 96% / 96% | 94% / 97% | 96% / 97% | 77% / 86% / 81% |
+
+  - The oracle summary model of entry 63 gives 64% exact.
+  - The joint moves found no gain here. The single moves did it: this time the weakest facts
+    included one appearance of each agent, and both were placed (fit 112.04, then 113.02).
+  - In entry 73 the single moves placed both appearances of one agent first, and then nothing
+    could place the other agent's: fit 112.63. **The likelihood prefers the answer with both
+    agents' hunger** (113.03 against 112.63), so the difference is the order the moves were
+    tried in, not what the fit can tell.
+- *Meaning:*
+  - **With nothing paired and grid video unmarked, the fit now reads both agents' hunger as well
+    as the oracle, and exact frames more than double, under the true matching.** What is left is
+    the objects' places (77-88%).
+  - Split moves now take `orders`: the whole procedure in several orders of the weak facts (as
+    found, reversed, shuffled), keeping the likeliest fit, which needs nothing from the truth
+    (`split_orders` in decipherment). A test checks more orders never fit worse.
+  - Next: check that this is robust (`split-refine-6`: three orders, one round), then put split
+    moves into the full grid search, where the matching isn't given. [TBD]
