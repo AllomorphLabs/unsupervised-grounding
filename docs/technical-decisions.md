@@ -28,6 +28,9 @@ Status is **Decided** (code follows it), **Proposed** (current plan, not yet con
 | 20 | Grid video: patches for places, one cell per thing, random cells within a patch | Proposed |
 | 21 | Frame structure and word kinds found from each stream alone | Proposed |
 | 22 | The matching search covers every order, with screening | Proposed |
+| 23 | The summary model can learn facts the fit's own paths can't teach it (split moves) | Proposed |
+| 24 | What the method assumes, and which pairs are spent on tuning | Proposed |
+| 25 | GPU memory: allocator setting for long runs | Proposed |
 
 ## 1. Python 3.15, PyTorch, uv
 
@@ -292,7 +295,8 @@ Replaces the hand-written parts of decision 19 for grid video. Experiment log, e
 
 - **Frames** (`align/units.py`): places are the connected patches where anything is ever drawn; things are groups of values of which at most one is on at a time and between which a thing's presence hands over; appearances are a thing's channels. Decipherment reads each frame as units: a thing at a place (with its appearance, `grid_units: joint`, or apart from it, `split`), two things in one cell, a thing gone. It assumes only that a frame is a grid of cells with channels.
 - **Words** (`align/words.py`, `word_kinds: classes`): tokens are clustered by the distributions of their neighbours, cut at the largest jump in merge distance. Which classes name the things and places is decided by size, and every candidate reading is searched.
-- **State vectors still use the pilot's hand-written parser** (`align/structure.py`), because a shuffled vector of facts has no cells or patches from which to find places. **Open:** whether to find state-vector structure from statistics alone, or to change the comparison condition.
+- **State vectors** (`find_units_vector`, `structure: statistics`; agreed 25 November): things as above; an agent is a thing whose every change coincides with one outside value (its "acted" flag); places are found by linking a value of another thing to the value the acting agent is always in when it changes; values that change only when an agent acts are that agent's flags or "held by" it. On all three pilot pairs it recovers the hand-written parser's structure (entry 67). The pilot's parser (`structure: rules`) stays for reproducing the pilot.
+- **Counting changes for the shortlist:** a thing changes when its place changes or it disappears; this ranks the right reading of the word classes first on every pilot pair in both formats (entry 67).
 
 ## 22. The matching search covers every order, with screening
 
@@ -300,4 +304,27 @@ Replaces the hand-written parts of decision 19 for grid video. Experiment log, e
 
 - **Every order:** for grid video, any thing word may name any thing, so the agents' order is never fixed. For state vectors, `agent_orders: all` searches both agent orders; `fixed` (the default) keeps the pilot's behaviour, so its results reproduce. Matchings that differ only in the agents' order have identical raw-count profiles, so they are ranked, screened and reported side by side.
 - **Screening** (`screen`, `screen_episodes`, `screen_iterations`): raw counts alone can't separate some matchings (glass and apple, river and hill), so the closest `screen` matchings by counts each get a short fit, and the best `shortlist` by selection score get the full fit.
+
+## 23. The summary model can learn facts the fit's own paths can't teach it (split moves)
+
+`align/latent.py`; `split_at` and the other `split_` settings in `align/decipher.py`. Experiment log, entries 69-74.
+
+- **The problem:** the summary model is fitted to the fit's own paths. A fact the words don't anchor (hunger) starts with no effect, and "no effect" is a local optimum: the noise term absorbs the fact's variation, so no small change improves the fit.
+- **The way out:** fit the summary model to the summaries' own distribution, with each summary coming from one combination of units weighted by how often the frame stream shows it (no pairing), and for the facts of smallest effect, restart their effect along the main directions of the left-over noise, keeping a restart only if it improves the fit. It needs the fact to be a unit of its own (`grid_units: split`).
+- **Order of the moves:** which facts get placed can depend on the order they are tried in, so the procedure runs in several orders and keeps the likeliest fit (`split_orders`). One thing's two appearances can also be restarted together (`split_together`).
+- **Status:** under the true matching on grid pair 0, split moves after 12 particle iterations, then 4 more, read both agents' hunger at 94-97% and lift exact frames from 20% to 47% (oracle summary model: 64%; entry 74). Not yet tried in the full search, where the matching isn't given; until then this stays Proposed.
+
+## 24. What the method assumes, and which pairs are spent on tuning
+
+Nothing in the method reads `hidden/`, but it isn't assumption-free. These are design knowledge, not truth, and the write-up must state them.
+
+- **The world:** frames show things that are at places, look one of a few ways, can be held by another thing, and can disappear (`align/units.py`). The parsers' thresholds (`min_hand`, `share`, `min_count`) were set on the pilot worlds.
+- **The language:** each sentence states one fact, and words fill the roles this entity, other entity, this place, other place, or none (`SentenceFit` and its tied tables). Which word classes name things and which name places is decided by class size, allowing one unnamed thing (`align/words.py`).
+- **Grid video draws hunger as a colour.** The frame stream has to show hunger for there to be anything to align; each pair's colours are random, so this can't separate the agents.
+- **Tuning pairs:** several choices were made by looking at the truth: the count profile (entry 67), split units, summary power 0.5 and the split-move settings (entries 68-76). Tuning on the pilot world is allowed (decision 4), but it spends those pairs: **pilot pairs 0-2 and grid pair 0 are tuning pairs**, and a success on them doesn't count as confirmation. Confirmation needs fresh pairs, run once with the method frozen.
+- **Defaults:** `DecipherConfig` still defaults to the pilot's hand-written versions (`structure: rules`, `word_kinds: rules`, `agent_orders: fixed`), which reproduce the pilot's results. Once the general versions pass their searches, they become the defaults.
+
+## 25. GPU memory: allocator setting for long runs
+
+Experiment log, entry 78. The particle filter re-runs the frame model on a history one frame longer at every step, and PyTorch's memory cache fragments: one pass used 1.35 GB but reserved 13.5 GB, spilling into system memory and slowing searches two to three times. Long runs set `PYTORCH_CUDA_ALLOC_CONF=garbage_collection_threshold:0.6,roundup_power2_divisions:8`, which changes where tensors are placed, not what is computed (one pass reserved 4.8 GB). Nothing else runs on the GPU beside a search. Caching the frame model's attention would remove the cause.
 

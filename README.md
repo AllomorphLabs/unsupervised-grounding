@@ -16,7 +16,9 @@ There's an interactive demo of the idea on the website: <https://allomorphlabs.c
 
 The pilot is complete. On three independent pairs, aligning the two models with no paired data decodes 59.6% of held-out sentences, on average, into exactly the right world state, against 0.8% for raw word counts. Every attempt, including the ones that failed, is recorded in the [experiment log](docs/alignment-attempts.md).
 
-The first pass of the literature and novelty check is also complete. Two 2026 papers prove and demonstrate the symmetry limit for simpler settings, so the proposal now tests whether it carries over to ours, and adds predictions for near-symmetries and for worlds that only partly overlap. Next: building the full world and publishing the pre-registration.
+The first pass of the literature and novelty check is also complete. Two 2026 papers prove and demonstrate the symmetry limit for simpler settings, so the proposal now tests whether it carries over to ours, and adds predictions for near-symmetries and for worlds that only partly overlap.
+
+Phase 3 is under way: grid video, and the pre-registration. Both observation formats now have their structure found from their own statistics, with nothing hand-written. Told which word is which, the method decodes 37–47% of grid-video frames exactly right; whether its search finds that matching with no hints is being tested.
 
 ## Running the code
 

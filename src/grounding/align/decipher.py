@@ -45,7 +45,7 @@ import yaml
 
 from grounding.align.run import ALIGN_PARTS
 from grounding.align.structure import FrameLayout, WordTypes, _transitions, frame_layout, word_types
-from grounding.align.units import UnitView, find_units
+from grounding.align.units import UnitView, find_units, find_units_vector
 from grounding.align.words import Roles, role_options, word_classes
 from grounding.data.load import LangStream, load_lang, load_obs
 from grounding.data.tokens import EPISODE, STOP
@@ -76,6 +76,13 @@ class DecipherConfig:
     freeze_mixture: int = 8  # iteration from which the mixture weights stay fixed
     update_paths: int = 8  # particle paths per episode used in each update
     shortlist: int = 6
+    # Split moves on the summary model after this iteration (0: off; units only, entry 69).
+    split_at: int = 0
+    split_weakest: int = 0  # facts of smallest effect to try (0: those below a quarter of median)
+    split_rounds: int = 1
+    split_orders: int = 1  # orders of the weak facts to try, keeping the likeliest (entry 74)
+    # Also restart one thing's appearances together while both stay weak (entry 72).
+    split_together: bool = False
     # Screening (0: off): the ``screen`` matchings closest by raw counts each get a short fit
     # (``screen_episodes``, ``screen_iterations``), and the ``shortlist`` that best explain the
     # selection episodes go on to the full fit. Raw counts alone can't tell some matchings apart.
@@ -88,6 +95,10 @@ class DecipherConfig:
     # State vectors: "fixed" keeps the agents in one order (the pilot, decision 19); "all" searches
     # every order (decision 22). Grid video always searches every order.
     agent_orders: str = "fixed"
+    # State vectors: "rules" uses the pilot's hand-written parser (structure.frame_layout);
+    # "statistics" finds the structure from the frame stream's statistics alone
+    # (units.find_units_vector) and deciphers through units, as for grid video.
+    structure: str = "rules"
     # Grid video only. grid_units: "split" keeps where a thing is apart from how it looks;
     # "joint" makes each place-and-appearance one unit (align.units). valid_only: candidate frames
     # that break the frame stream's own structure (a thing drawn twice) get no weight.
@@ -555,6 +566,8 @@ class Fit:
         TS = self.start_tables()
         e0 = self.start_emit(TS, tok[0])
         ll = torch.log(e0.mean(1))
+        tiny = torch.finfo(e0.dtype).tiny
+        e0 = torch.nan_to_num(e0, nan=0.0, posinf=0.0) + tiny
         alpha0 = e0 / e0.sum(1, keepdim=True)  # exact odds over start frames, until a first move
         pick = torch.multinomial(alpha0, N, replacement=True, generator=gen).reshape(-1)
         hist = torch.zeros(R, D.ctx, d, device=dev)
@@ -613,10 +626,15 @@ class Fit:
             if ok_c is not None:
                 e_mv = e_mv * ok_c.reshape(R, M).float()
             contrib = torch.cat([(q * e_stay)[:, None], (1 - q)[:, None] * e_mv / M], 1)
-            contrib = torch.nan_to_num(contrib, nan=0.0, posinf=0.0).clamp(min=0) + 1e-300
+            # The floor must be representable in float32 (1e-300 rounds to 0): without it a sharp
+            # summary model can leave a particle with no option of nonzero weight (entry 69).
+            contrib = torch.nan_to_num(contrib, nan=0.0, posinf=0.0).clamp(min=0)
+            # The floor goes on "stay" only, which is always allowed: on every option it would let
+            # a particle move past the frame model's context, or onto an excluded frame.
+            contrib[:, 0] = contrib[:, 0] + tiny
             w = torch.where(rt, contrib.sum(1), torch.ones(R, device=dev))
             wb = w.reshape(Be, N)
-            ll = ll + torch.log(wb.mean(1).clamp(min=1e-300)) * real[t]
+            ll = ll + torch.log(wb.mean(1).clamp(min=tiny)) * real[t]
             choice = torch.multinomial(contrib, 1, generator=gen)[:, 0]
             mv = (choice > 0) & rt
             newf = torch.where(
@@ -631,9 +649,11 @@ class Fit:
             traj[:, t] = newf.to(torch.uint8)
             moved_t[:, t] = mv
             if un.any():
-                alpha0 = alpha0 * E0z
+                # Same float32 floor as below: if every start view's weight underflows, the odds
+                # would become 0/0 (entry 69).
+                alpha0 = torch.nan_to_num(alpha0 * E0z, nan=0.0, posinf=0.0) + tiny
                 alpha0 = alpha0 / alpha0.sum(1, keepdim=True)
-            wb = torch.nan_to_num(wb, nan=0.0, posinf=0.0) + 1e-300
+            wb = torch.nan_to_num(wb, nan=0.0, posinf=0.0) + tiny
             idx = torch.multinomial(
                 wb / wb.sum(1, keepdim=True), N, replacement=True, generator=gen
             )
@@ -728,6 +748,40 @@ class Fit:
                 f"    iteration {it + 1}/{self.D.cfg.iterations}: "
                 f"fit {ll:.4f} ({time.time() - t0:.0f}s)"
             )
+            if self.D.cfg.split_at and it + 1 == self.D.cfg.split_at and self.gauss is not None:
+                self.split(batches, log)
+
+    def split(self, batches: list[Batch], log=print) -> None:
+        """Split moves on the summary Gaussian (align.latent.split_moves): facts it has learned
+        no effect for get a chance to start, from the summaries' own distribution and the frame
+        stream's prior over unit views. Uses no pairing (entry 69)."""
+        from grounding.align.latent import prune, split_moves
+
+        D = self.D
+        z = torch.cat([b.z[b.real] for b in batches])
+        # The rarest unit views (0.1% of frames) are dropped for speed, as in entries 70-74.
+        views, prior = prune(*D.unit_prior())
+        cfg = D.cfg
+        together = None
+        if cfg.split_together:
+            # One thing's appearances exclude each other, so their effects may only be placed
+            # jointly (entry 72). Read from the frame structure alone.
+            looks = [(j, u[1]) for j, u in enumerate(D.units.units) if u[0] == "looks"]
+            together = [(a, b) for (a, ta), (b, tb) in itertools.combinations(looks, 2) if ta == tb]
+        out = split_moves(
+            z,
+            views,
+            prior,
+            self.gauss,
+            weakest=cfg.split_weakest,
+            rounds=cfg.split_rounds,
+            together=together,
+            orders=cfg.split_orders,
+            log=log,
+        ).gauss
+        fine = torch.isfinite(out.Wb).all() and torch.isfinite(out.A).all()
+        if fine and torch.isfinite(out.norm):
+            self.gauss = out
 
     @torch.no_grad()
     def decode(self, batches: list[Batch], seed: int | None = None):
@@ -898,7 +952,8 @@ class GridMatching:
 
 
 class GridDecipherer(Decipherer):
-    """Decipherment of a grid-video stream (``grounding.align.units``).
+    """Decipherment through units found from the frame stream alone (``grounding.align.units``):
+    grid video always, and state vectors with ``structure: statistics``.
 
     Emissions and the summary Gaussian read each frame as units: a thing at a place, a thing's
     appearance, two things in one cell, a thing gone. A matching names the things and the places,
@@ -911,7 +966,10 @@ class GridDecipherer(Decipherer):
         self.lang, obs = load_lang(self.pair / "data"), load_obs(self.pair / "data")
         if cfg.grid_units not in ("split", "joint"):
             raise ValueError(f"unknown grid_units {cfg.grid_units!r}")
-        self.units = find_units(obs, split=cfg.grid_units == "split")
+        if obs.shape is None:
+            self.units = find_units_vector(obs)
+        else:
+            self.units = find_units(obs, split=cfg.grid_units == "split")
         self.view = UnitView(self.units, device)
         n_things, n_places = len(self.units.things), self.units.places
         if cfg.word_kinds == "classes":
@@ -953,7 +1011,6 @@ class GridDecipherer(Decipherer):
         f0, f1, w = _transitions(obs, ~obs.held_out)
         u0 = self.view(torch.tensor(f0, dtype=torch.float32, device=self.dev))
         u1 = self.view(torch.tensor(f1, dtype=torch.float32, device=self.dev))
-        changed = (u0 != u1).float()
         on = (u1 - u0).clamp(min=0)
         wt = torch.tensor(w, dtype=torch.float32, device=self.dev)
         units = self.units.units
@@ -962,8 +1019,11 @@ class GridDecipherer(Decipherer):
         for j, u in enumerate(units):
             if u[0] == "at":
                 self.arrivals[u[2]] += float((wt * on[:, j]).sum())
+        # A thing changes when its place changes or it disappears: the definition that ranks the
+        # right reading of the word classes first on every pilot pair, in both formats (entry 67).
+        changed = (u0 != u1).float()
         for k in range(len(self.units.things)):
-            cols = [j for j, u in enumerate(units) if u[0] in ("at", "looks", "gone") and u[1] == k]
+            cols = [j for j, u in enumerate(units) if u[0] in ("at", "gone") and u[1] == k]
             self.thing_changes[k] = float((wt * (changed[:, cols].sum(1) > 0).float()).sum())
         self.word_counts = np.bincount(self.lang.tokens, minlength=self.V).astype(float)
 
@@ -1003,6 +1063,21 @@ class GridDecipherer(Decipherer):
 
     def actor_word(self, c: torch.Tensor, places_t: torch.Tensor) -> torch.Tensor:
         return torch.full((c.shape[0],), self.V, device=self.dev, dtype=torch.long)
+
+    def unit_prior(self):
+        """Distinct unit views among the frame stream's training frames, and the share of each."""
+        if getattr(self, "_prior", None) is None:
+            from grounding.align.latent import unit_prior
+
+            obs = load_obs(self.pair / "data")
+            ep = np.searchsorted(obs.episode_start, np.arange(len(obs.frames)), side="right") - 1
+            fr = obs.frames[~obs.held_out[ep]]
+            U = [
+                self.view(torch.tensor(fr[i : i + 65536], dtype=torch.float32, device=self.dev))
+                for i in range(0, len(fr), 65536)
+            ]
+            self._prior = unit_prior(torch.cat(U))
+        return self._prior
 
     def tying(self, m: GridMatching):
         """For every unit feature: its kind (shared table) and the role class of every word.
@@ -1133,7 +1208,9 @@ def decipher_pair(
     out = pair / "align" / name
     out.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
-    grid = load_obs(pair / "data").shape is not None
+    if cfg.structure not in ("rules", "statistics"):
+        raise ValueError(f"unknown structure {cfg.structure!r}")
+    grid = load_obs(pair / "data").shape is not None or cfg.structure == "statistics"
     D = (GridDecipherer if grid else Decipherer)(pair, cfg, dev)
     if grid:
         u = D.units
