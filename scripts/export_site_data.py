@@ -7,7 +7,9 @@ Reads the pilot pairs' scored decipherment runs and writes two JSON files:
   the restart variance (entry 54 of docs/alignment-attempts.md);
 - sample.json: a sample of real held-out language episodes from pair 2 (the untouched
   confirmation pair), each sentence with its words, a word-by-word gloss, the state the
-  method decoded it to and the true state.
+  method decoded it to and the true state;
+- models.json: the architecture of pair 2's two trained models, with the number of learned
+  parameters in each part, read from the saved weights, and a real token sequence.
 
 The sample episodes are the first held-out episodes in scoring order that are long enough
 to be worth showing. They are not chosen by how well they decode. Uses the hidden ground
@@ -23,6 +25,7 @@ import numpy as np
 from grounding.analysis.labels import load_key, load_lang_labels
 from grounding.analysis.score import _world_spec, lang_truth, relabel_states
 from grounding.data.load import load_lang, load_obs
+from grounding.models.train import load_model
 from grounding.render.lang.grammar import KINDS
 from grounding.render.state.vector import decode as read_frame
 from grounding.render.state.vector import encode
@@ -220,10 +223,73 @@ def sample() -> dict:
     }
 
 
+def _count(model, prefix: str) -> int:
+    return sum(p.numel() for n, p in model.named_parameters() if n.startswith(prefix))
+
+
+def models() -> dict:
+    """Pair 2's two models: settings, and learned parameters per part, from the saved weights."""
+    pair = PILOT / f"pair-{SAMPLE_PAIR:03d}"
+    lang, obs = (load_model(pair / f"models/{m}") for m in ("lang-ps", "obs-joint"))
+    lc, oc = lang.backbone.cfg, obs.backbone.cfg
+    lang_parts = {
+        "embed": _count(lang, "embed.") + _count(lang, "backbone.pos."),
+        "block": _count(lang, "backbone.blocks.0."),
+        "blocks": _count(lang, "backbone.blocks."),
+        "norm": _count(lang, "backbone.norm."),
+        "head": _count(lang, "head."),
+        "down": _count(lang, "down."),
+        "future": sum(
+            _count(lang, k) for k in ("up.", "future_embed.", "future_decoder.", "future_head.")
+        ),
+    }
+    obs_parts = {
+        "embed": _count(obs, "embed.") + _count(obs, "backbone.pos."),
+        "block": _count(obs, "backbone.blocks.0."),
+        "blocks": _count(obs, "backbone.blocks."),
+        "norm": _count(obs, "backbone.norm."),
+        "head": _count(obs, "joint."),
+    }
+    for m, parts in ((lang, lang_parts), (obs, obs_parts)):
+        listed = sum(v for k, v in parts.items() if k != "block")
+        assert listed == sum(p.numel() for p in m.parameters()), "every parameter is listed once"
+    # A real stretch of the language stream: the start of the first held-out episode.
+    data = load_lang(pair / "data")
+    first = int(np.flatnonzero(data.held_out)[0])
+    start = int(data.episode_start[first])
+    tokens = [data.words[t] for t in data.tokens[start : start + 12]]
+    return {
+        "pair": SAMPLE_PAIR,
+        "lang": {
+            "params": sum(p.numel() for p in lang.parameters()),
+            "vocab": lang.vocab,
+            "context": lc.context,
+            "layers": lc.layers,
+            "width": lc.width,
+            "heads": lc.heads,
+            "summary": lang.down.out_features,
+            "future": lang.future,
+            "future_layers": len(lang.future_decoder.blocks),
+            "parts": lang_parts,
+            "tokens": tokens,
+        },
+        "obs": {
+            "params": sum(p.numel() for p in obs.parameters()),
+            "frame": obs.frame_size,
+            "context": oc.context,
+            "layers": oc.layers,
+            "width": oc.width,
+            "heads": oc.heads,
+            "joint_hidden": obs.joint.l2.out_features,
+            "parts": obs_parts,
+        },
+    }
+
+
 def main() -> None:
     out = Path(sys.argv[1])
     out.mkdir(parents=True, exist_ok=True)
-    data = {"results": results(), "sample": sample()}
+    data = {"results": results(), "sample": sample(), "models": models()}
     for name, part in data.items():
         (out / f"{name}.json").write_text(json.dumps(part, separators=(",", ":")), "utf-8")
     for r in data["results"]:
@@ -232,6 +298,7 @@ def main() -> None:
             {k: round(r[k], 3) for k in ("method", "counts", "baseline", "chance")},
             [round(x, 3) for x in r["restarts"]],
         )
+    print("models:", json.dumps(data["models"]))
     s = data["sample"]
     print(
         "sample:",

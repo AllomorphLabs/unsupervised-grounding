@@ -262,9 +262,9 @@ runs/pilot/pair-001` aligns a pair, and `python -m grounding.analysis.score runs
   method frozen again, only if it selects the true matching on pairs 0 and 1.
 - **The proposal now names this method.** It first named representation-level methods
   (vec2vec-style, cycle-consistent, quadratic assignment), which failed here (entries 1-20). Its
-  revision after the pilot adopts decipherment, rewords the working definition to match, adds the
+  second version adopts decipherment, rewords the working definition to match, adds the
   counted-transitions control and requires the search to cover every agent order (proposal,
-  "Pilot results and revisions").
+  "How this proposal came to be").
 - **Controls:** `frame_model: counts` replaces the frame model with counted transitions from
   the frame stream (nearest seen frame where unseen). `configs/pilot-decipher-baseline.yaml` (counted
   transitions, no language model) is the co-occurrence control; `configs/pilot-decipher-counts.yaml`

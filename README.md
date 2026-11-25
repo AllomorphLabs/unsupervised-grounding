@@ -1,20 +1,22 @@
 # unsupervised-grounding
 
-**Can an AI that has only ever read words be connected to the world those words describe, and where must that connection fail?**
+**When an AI decodes a language with no dictionary, some mistakes are unavoidable. This project predicts exactly which ones, before the experiment runs, and then checks.**
 
 This repository holds the code for *Predicting the Limits of Unsupervised Grounding*, the first project from [Allomorph](https://allomorphlabs.com), an independent research organisation working on hard, open problems in computer science.
 
 ## The idea
 
-We build a small simulated world and describe it in two ways that never meet: sentences in an invented language, and silent grid "videos". One AI learns only from the sentences, and another only from the videos. We then try to match up what each has learned, with no dictionary and no paired examples. Because we built the world, every match can be checked against the truth.
+We build a small simulated world and describe it in two ways that never meet: sentences in an invented language, and silent grid "videos". One AI learns only from the sentences, and another only from the videos. We then decode the sentences using what the second AI has learned, with no dictionary and no paired examples. Because we built the world, every answer can be checked against the truth.
 
-The central prediction is that the mistakes are predictable in advance. Where two things in the world play exactly the same role, like twin characters who do everything together, no amount of pattern-matching can tell them apart. Give one of them a distinctive habit, and the confusion should disappear while nothing else changes. Testing this gives a precise answer to how much meaning a text-only AI can be shown to hold, and a map of what it can never pin down.
+The central prediction is that the mistakes are predictable in advance. Where two things in the world play exactly the same role, like twin characters who do everything together, no amount of pattern-matching can tell them apart. Give one of them a distinctive habit, and the confusion should disappear while nothing else changes. Where two things are only *almost* alike, they should be mixed up some of the time, and more often the closer they are. Testing this gives a precise answer to how much of what words mean can be recovered from patterns alone, and a map of what never can be.
 
-There's an interactive demo of the idea on the website: <https://allomorphlabs.com/#project>.
+There's an interactive demo of the idea on the website: <https://allomorphlabs.com/research/unsupervised-grounding/>.
 
 ## Status
 
-Pilot in progress. The simulated world, the invented language, the two data streams and the two models are built and tested. On the first pilot pair, aligning the two models with no paired data decodes about three quarters of held-out sentences into exactly the right world state; the method is now being confirmed on fresh pairs. Every attempt so far, including the ones that failed, is recorded in the [experiment log](docs/alignment-attempts.md).
+The pilot is complete. On three independent pairs, aligning the two models with no paired data decodes 59.6% of held-out sentences, on average, into exactly the right world state, against 0.8% for raw word counts. Every attempt, including the ones that failed, is recorded in the [experiment log](docs/alignment-attempts.md).
+
+The first pass of the literature and novelty check is also complete. Two 2026 papers prove and demonstrate the symmetry limit for simpler settings, so the proposal now tests whether it carries over to ours, and adds predictions for near-symmetries and for worlds that only partly overlap. Next: building the full world and publishing the pre-registration.
 
 ## Running the code
 
@@ -53,6 +55,7 @@ The earlier representation-matching aligner and the co-occurrence baseline are s
 - The same proposal as a Word document: [allomorphlabs.com/proposals/predicting-the-limits-of-unsupervised-grounding.docx](https://allomorphlabs.com/proposals/predicting-the-limits-of-unsupervised-grounding.docx)
 - **[Technical decisions](docs/technical-decisions.md)**: the engineering choices behind the code, such as language, tooling and how the invented language is split into tokens, and the reasons for each.
 - **[Experiment log](docs/alignment-attempts.md)**: every alignment attempt in the pilot, in plain language: why it was tried, what was done, what happened and what it means.
+- **[Literature review](docs/literature-review.md)**: the novelty check, with every source found, how much of it was read and what it means for the design.
 
 ## Principles
 
