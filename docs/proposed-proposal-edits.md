@@ -1,0 +1,80 @@
+# Proposed proposal edits: grid-video pilot (phase 3, steps 1 and 2)
+
+*For approval. Nothing here has been applied to [proposal.md](proposal.md). Each item says what
+the evidence is (experiment log entries 56-64) and what would change.*
+
+## 1. Say how grid video is drawn, and what that does to symmetry
+
+**Evidence:** entries 56-57. The renderer draws each place as a patch of cells, each thing in a
+random free cell of its patch, a carried object in its carrier's cell, and nothing that marks who
+acted. Which colour draws which agent is assigned at random per pair.
+
+**Edit:** in *Experimental design*, step 3, add one sentence: places are patches of the image,
+things are drawn in random cells within them, and which appearance belongs to which entity is
+assigned at random per pair, so interchangeable agents differ only by an arbitrary colour. In
+*Renderer checks*, note that a random appearance per pair is how grid video keeps the agent
+symmetry.
+
+## 2. Replace "Structure supplied to the aligner" with what is now done
+
+**Evidence:** entries 58-59. For grid video, the frames' structure (places, things, appearances,
+carrying) and the words' kinds are found from each stream alone, with no hand-written parser and
+no grammar rules. The general procedures assume only that a frame is a grid of cells with
+channels, and that tokens come in sequences.
+
+**Edit:** rewrite the threat to say the grouping is now a general procedure for grid video, which
+is the main condition, and that the structure found is checked against the hidden key only after
+the fact. Keep the [TBD] only for state vectors (item 3).
+
+## 3. Decide what to do about the state-vector comparison condition
+
+**Evidence:** decision 21. A shuffled vector of facts has no cells or patches, so the general
+procedure can't find places in it; state vectors still use the pilot's hand-written parser.
+
+**Decided (25 November):** (b), a statistics-only parser for state vectors. The options as they
+were put:
+- (a) Keep state vectors, and accept the hand-written parser there as a declared limitation of the
+  comparison condition only.
+- (b) Keep state vectors, and build a statistics-only parser for them before pre-registration
+  (more work; places would have to come from which values change together).
+- (c) Replace the comparison condition with a "symbolic grid": the same grid geometry, one cell
+  per thing per place and no randomness in cell choice. The same general procedure then applies
+  to both conditions, and the gap between them measures what picture-like randomness costs.
+
+(The recommendation was (c); (b) was chosen, which keeps the proposal's comparison condition as
+written.)
+
+## 4. Add impossible candidate frames to the threats to validity
+
+**Evidence:** entry 62. The grid frame model's own rollouts drift into impossible frames: only 14%
+of 40-step rollouts stay valid throughout, against 99.6% valid single samples for the pilot's
+state-vector model.
+
+**Edit:** under *Threats to validity*, add: "A frame model can propose impossible frames. The
+aligner gives no weight to candidates that break the structure found in the frame stream itself
+(a thing drawn twice), and the share of valid samples is reported for every frame model."
+
+## 5. Flag the open problem: learning to read hunger without an actor mark
+
+**Evidence:** entry 63. The summaries hold hunger (97% in a two-way test), and with an oracle
+summary model the grid pipeline decodes 64% of frames exactly right under the true matching. But
+the fit learns its summary model from its own paths, and words alone don't anchor hunger, so it
+never learns to read it (hunger stays at about 72%).
+
+**Further evidence:** entry 65: on the search's own measure, a matching with all three object
+words wrong beats the truth (17.10 against 17.00), so the search can't succeed until this is
+fixed. Entry 66: marking who acted in the pictures doesn't help, so the missing mark isn't the
+cause.
+
+**Decided (25 November):** grid video stays unmarked; the fix comes from inside the method.
+
+**Edit:** none to the design yet. This is a method problem to fix before the method is frozen on
+the cipher control (phase 4). It should be listed among the open questions until it is solved.
+
+## 6. Compute
+
+**Evidence:** entries 60 and 64. A full-scale grid fit takes about 31 minutes against about 13
+for state vectors, and the search now screens 24 matchings before fitting the finalists.
+
+**Edit:** none yet. Revisit the compute estimate in *Work plan and resources* once the method is
+settled, since the per-pair cost of alignment has roughly doubled.

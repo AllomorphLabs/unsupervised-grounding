@@ -49,6 +49,14 @@ uv run python -m grounding.analysis.score runs/pilot/pair-000 --kind decipher
 
 The earlier representation-matching aligner and the co-occurrence baseline are still available through `grounding.align.run` (`--kind model` and `--kind raw`).
 
+Grid video, the proposal's main observation condition, is in progress (phase 3). The same steps work on a grid pair, with the frame structure and the words' kinds found from each stream alone:
+
+```
+uv run python -m grounding.data.make configs/pilot-grid.yaml --pairs 0
+uv run python -m grounding.models.train runs/pilot-grid/pair-000 --stream obs --config configs/pilot-grid-models.yaml --out runs/pilot-grid/pair-000/models/obs-joint
+uv run python -m grounding.align.decipher runs/pilot-grid/pair-000 --config configs/pilot-grid-decipher.yaml
+```
+
 ## Documents
 
 - **[The full proposal](docs/proposal.md)**: hypotheses, experimental design, controls, analysis plan and work plan.

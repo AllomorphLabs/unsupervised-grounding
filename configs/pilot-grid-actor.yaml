@@ -1,0 +1,11 @@
+# Grid video with the acting agent's cell marked (experiment log, entry 66): as configs/pilot-grid.yaml,
+# plus one channel, shared by all agents, that marks who acted on each step (as the state vectors'
+# "acted" flags do). Pair k uses root seed k, so its language stream is identical to pilot pair k's.
+world: pilot
+episodes: 50000  # per stream
+min_len: 20
+max_len: 60
+held_out: 0.1
+recap: 0.1
+observation: grid
+grid_actor: true

@@ -25,6 +25,9 @@ Status is **Decided** (code follows it), **Proposed** (current plan, not yet con
 | 17 | A predictive-state head on the language model | Decided |
 | 18 | The frame model predicts whole next frames | Decided |
 | 19 | Alignment by decipherment on the two trained models | Decided |
+| 20 | Grid video: patches for places, one cell per thing, random cells within a patch | Proposed |
+| 21 | Frame structure and word kinds found from each stream alone | Proposed |
+| 22 | The matching search covers every order, with screening | Proposed |
 
 ## 1. Python 3.15, PyTorch, uv
 
@@ -272,3 +275,29 @@ runs/pilot/pair-001` aligns a pair, and `python -m grounding.analysis.score runs
   average, without the frame model 52.6%, co-occurrence control 0.8% (entries 53 and 55, scored up to symmetry).
 - **Restarts:** `seed` sets a fit's random draws (0 reproduces every result above). Restarts on one
   pair measure the method's own variance and are summarised, not counted as independent samples.
+
+## 20. Grid video: patches for places, one cell per thing, random cells within a patch
+
+The main observation condition (`render/grid/frames.py`, `observation: grid` in a corpus config). Experiment log, entries 56-57.
+
+- **Layout:** each place is a 2-by-3 patch of cells, patches in one row with one-cell gaps; which patch shows which place is shuffled per pair. 8 yes/no channels per cell: two per agent (normal, hungry), two for the glass (intact, broken), one each for the stone and apple. Which channel draws which entity is shuffled per pair, so the agents differ only by a randomly assigned colour and the agent symmetry survives.
+- **Within a patch** a thing is drawn in a random free cell, chosen on arrival and kept while it stays. A carried object is drawn in its carrier's cell; nothing else ever shares a cell. An eaten object disappears. Nothing marks who acted. An option (`grid_actor`) marks the acting agent's cell in a shared channel; it is a **diagnostic only** (agreed 25 November): it didn't help the fit learn hunger (entry 66), and grid video stays unmarked.
+- **Public and hidden:** the grid's shape is public (in `obs.npz`); the drawing key is in `hidden/key.json`. A grid pair with root seed *k* has the same language stream as state-vector pair *k*, and its frames show the same episodes.
+- **Frame model:** as decision 18, with a wider whole-frame head (1,024 hidden units for 240 values). Sampling computes each hidden unit once, at the step its inputs are known: exactly the same samples, at about the cost of one pass.
+- **Open:** the frame model's own rollouts drift into impossible frames (a thing drawn twice): 14% of 40-step rollouts stay valid throughout (entry 62). Decipherment can exclude such candidates (`valid_only`), but a frame model that rarely makes them would be better.
+
+## 21. Frame structure and word kinds found from each stream alone
+
+Replaces the hand-written parts of decision 19 for grid video. Experiment log, entries 58-59 and 61-62.
+
+- **Frames** (`align/units.py`): places are the connected patches where anything is ever drawn; things are groups of values of which at most one is on at a time and between which a thing's presence hands over; appearances are a thing's channels. Decipherment reads each frame as units: a thing at a place (with its appearance, `grid_units: joint`, or apart from it, `split`), two things in one cell, a thing gone. It assumes only that a frame is a grid of cells with channels.
+- **Words** (`align/words.py`, `word_kinds: classes`): tokens are clustered by the distributions of their neighbours, cut at the largest jump in merge distance. Which classes name the things and places is decided by size, and every candidate reading is searched.
+- **State vectors still use the pilot's hand-written parser** (`align/structure.py`), because a shuffled vector of facts has no cells or patches from which to find places. **Open:** whether to find state-vector structure from statistics alone, or to change the comparison condition.
+
+## 22. The matching search covers every order, with screening
+
+`align/decipher.py`. Experiment log, entries 59 and 64.
+
+- **Every order:** for grid video, any thing word may name any thing, so the agents' order is never fixed. For state vectors, `agent_orders: all` searches both agent orders; `fixed` (the default) keeps the pilot's behaviour, so its results reproduce. Matchings that differ only in the agents' order have identical raw-count profiles, so they are ranked, screened and reported side by side.
+- **Screening** (`screen`, `screen_episodes`, `screen_iterations`): raw counts alone can't separate some matchings (glass and apple, river and hill), so the closest `screen` matchings by counts each get a short fit, and the best `shortlist` by selection score get the full fit.
+

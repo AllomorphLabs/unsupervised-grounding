@@ -247,10 +247,26 @@ class FrameModel(nn.Module):
             return (torch.rand(p.shape, device=h.device, generator=generator) < p).float()
         j = self.joint
         c1, c2, co = j.c1(h), j.c2(h), j.co(h)  # the context's part, the same for every value
+        # Each hidden unit depends only on the values before its degree, so it is computed once,
+        # at the step where those values are all known, instead of recomputing the whole network
+        # for every value. The result is exactly the same as a full pass per value.
+        m1 = j.l1.mask.sum(1).long()  # first-layer unit k sees values 0 .. m1[k]-1
+        # Second-layer unit k sees first-layer units of degree <= m2[k], all known by step m2[k].
+        m2 = torch.where(j.l2.mask > 0, m1[None].float(), -1.0).max(1).values.long()
+        w1 = j.l1.weight * j.l1.mask
+        w2 = j.l2.weight * j.l2.mask
+        wo = j.out.weight * j.out.mask
+        a1 = torch.zeros(n, w1.shape[0], device=h.device)
+        a2 = torch.zeros(n, w2.shape[0], device=h.device)
+        groups1 = [torch.nonzero(m1 == v).flatten() for v in range(self.frame_size)]
+        groups2 = [torch.nonzero(m2 == v).flatten() for v in range(self.frame_size)]
         for v in range(self.frame_size):
-            a = F.gelu(j.l1(x) + c1)
-            a = F.gelu(j.l2(a) + c2)
-            logit = a @ (j.out.weight[v] * j.out.mask[v]) + j.out.bias[v] + co[:, v]
+            g1, g2 = groups1[v], groups2[v]
+            if len(g1):
+                a1[:, g1] = F.gelu(x @ w1[g1].T + j.l1.bias[g1] + c1[:, g1])
+            if len(g2):
+                a2[:, g2] = F.gelu(a1 @ w2[g2].T + j.l2.bias[g2] + c2[:, g2])
+            logit = a2 @ wo[v] + j.out.bias[v] + co[:, v]
             x[:, v] = (
                 torch.rand(n, device=h.device, generator=generator) < torch.sigmoid(logit)
             ).float()

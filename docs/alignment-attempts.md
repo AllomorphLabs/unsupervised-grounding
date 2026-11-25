@@ -18,7 +18,22 @@ taught us.
 
 ## Where we are now
 
-*(Updated as the work moves on. Last updated after experiment 55.)*
+*(Updated as the work moves on. Last updated after experiment 66.)*
+
+**Phase 3, grid video (entries 56-66).**
+- Grid video runs end to end, with the frames' structure and the words' kinds found from each
+  stream alone (entries 56-59), and the search leaves the agents' order free.
+- But it doesn't yet work: under the true matching only about 15% of frames decode exactly right
+  (state vectors: about 79%), and on the search's own measure a matching with all three object
+  words wrong beats the truth (entry 65). The true matching and its agent-swapped twin tie, as
+  predicted.
+- The cause is narrowed down: the summaries hold hunger, and with a summary model fitted on the
+  true frames the method reaches 64% (entry 63). Fitted from its own guesses, it never learns to
+  read hunger. Marking who acted doesn't change that (entry 66).
+- **Next:** fix how the fit learns its summary model, keeping grid video unmarked; build a
+  statistics-only parser for state vectors (decisions agreed 25 November).
+
+**The pilot (entries 1-55).** The state of the pilot when it ended:
 
 - Both trained models work. The language model holds the world's state (readable at about 97%),
   and the frame model predicts whole next frames almost perfectly.
@@ -1145,3 +1160,297 @@ so from here on the frame side is the trained frame model.
   - From here on, every result is reported up to symmetry, as the proposal defines it, unless an
     entry says otherwise. The per-labelling figures stay in the score files (`by_symmetry`),
     since they show which way each pair swapped the agents.
+
+### Session 6: grid video (phase 3, steps 1 and 2)
+
+The proposal's main observation condition is grid video, not state vectors. The pilot used only
+state vectors. Before anything is pre-registered, this session asks whether decipherment works
+when the watcher sees pictures, and replaces the two hand-written steps the pilot left open: the
+step that sorts frame values and words into kinds, and the search that fixed the agents' order.
+
+**56. A grid-video renderer.**
+- *Why:* the main condition needs a picture-like observation stream, and the pilot had none.
+- *How:* `grounding.render.grid.frames`. Each frame is a small image, 2 rows by 15 columns of
+  cells, with 8 yes/no channels per cell (240 values).
+  - Each place is a patch of 2 by 3 cells; patches sit side by side with a one-cell gap. Which
+    patch shows which place is shuffled per pair.
+  - Each agent and object is one cell in its own channel. An agent has two channels (normal and
+    hungry), the glass two (intact and broken). Which channel draws which entity is shuffled per
+    pair, so the two agents look alike apart from a randomly assigned colour.
+  - Where in its patch a thing is drawn is random: a free cell is chosen when it arrives and kept
+    while it stays. A carried object is drawn in its carrier's cell and moves with it; dropped,
+    it lands in a random free cell. An eaten apple disappears.
+  - Nothing marks who acted, so a wait changes nothing on screen. (State vectors had "acted"
+    flags.)
+  - The grid's size is public, as an image's size is; what each channel and patch means is in
+    the pair's hidden key.
+  - Grid pair 0 (`runs/pilot-grid/pair-000`, config `configs/pilot-grid.yaml`) uses root seed 0.
+    Its language stream is byte-for-byte pilot pair 0's, and its frames show the same episodes as
+    pilot pair 0's state vectors, only drawn differently. So pair 0's trained language model was
+    reused, and grid and state vectors can be compared on the same episodes.
+- *Result:* tests confirm that every frame decodes back to its true state, that nothing is drawn
+  outside the patches, that only a carrier and what it carries ever share a cell, and that
+  agents get their channels symmetrically.
+- *Meaning:* the renderer is ready; the open question is whether the alignment can read it.
+
+**57. A frame model for grid video, and a faster exact sampler.**
+- *Why:* the frame model's whole-frame head predicts a frame value by value. A grid frame has 240
+  values against the state vector's 45, so the head needs more width, and sampling (which
+  recomputed the whole head once per value) would be about 90 times slower than in the pilot.
+- *How:*
+  - Head width 1,024 hidden units instead of 256 (about four per value, as in the pilot);
+    otherwise the pilot's frame-model settings (`configs/pilot-grid-models.yaml`).
+  - Sampling now computes each hidden unit once, at the step where all the values it depends on
+    are known. This gives exactly the same samples (checked against the old way at three sizes),
+    at roughly the cost of one pass through the head instead of one pass per value.
+- *Result:* trained in 7.8 minutes, 20,000 steps. Held-out loss 0.0154 per value, about 3.7 nats
+  per frame (the pilot's state-vector model: about 2.1). The difference is about what the random
+  choice of cell adds: each arrival picks one of about five free cells, about 1.6 nats.
+- *Meaning:* the frame model learns the grid world about as well as the state-vector one; the
+  extra loss is the renderer's own randomness, which no model can predict.
+
+**58. Finding the frames' structure from the frames alone.**
+- *Why:* decipherment needs to know which frame values belong to which thing and which place. In
+  the pilot this was a hand-written parser that knew the state vector's meaning (acted flags,
+  hunger flags, held, broken, gone). That can't read pictures, and the user asked for it to be
+  replaced by a general procedure.
+- *How:* `grounding.align.units`, using only the frame stream's statistics and the fact that a
+  frame is a grid of cells with channels:
+  - *Places* are the separate patches of the image where anything ever appears (connected groups
+    of cells that are ever drawn on).
+  - *Things* are groups of values of which at most one is on at a time, and between which a
+    thing's presence hands over from frame to frame. They are built by merging groups, most
+    hand-overs first, while no two values in a group are ever on together.
+  - *Appearances* are the channels a thing is drawn in.
+  - Each frame is then read as *units*: a thing at a place in an appearance; two things in one
+    cell (one carries the other); a thing gone.
+- *Result:* on grid pair 0, with no knowledge of what any channel means, it finds 4 places and 5
+  things, each exactly one entity's channels (checked against the hidden key afterwards), and 39
+  units. On held-out frames, every "at" unit count and "in one cell" unit matches the true state
+  (tests).
+- *Meaning:* for grid video, the frame side no longer needs a hand-written parser.
+
+**59. Sorting words into kinds from the language alone.**
+- *Why:* the pilot's word types (agent, object, place, verb) came from rules about the pilot
+  grammar's word endings. The user asked for this to be replaced too.
+- *How:* `grounding.align.words`. Each token is described by the distributions of the token just
+  before it and just after it. Tokens are clustered by how alike those are (Jensen-Shannon
+  divergence, average linkage), and the clustering is cut at its largest jump in merge distance.
+  Groups of two or more tokens are the *classes*. Which classes name the frames' things and
+  places is decided by size alone: every class whose size equals the number of places, and every
+  union of classes whose size equals the number of things, is a candidate *reading*.
+- *Result:* on all three pilot pairs the cut falls at 0.063 (next merge: 0.25), and the classes
+  are the two agents, the three objects, the four places, and three groups of other words. The
+  places are unambiguous; the things have 6 candidate readings, of which one is right. Ranking
+  every matching under every reading by the raw frequency profiles (as the pilot's shortlist did)
+  puts the right reading far ahead on grid pair 0: best mismatch 0.021, against 0.345 for the
+  next reading.
+- *Meaning:* the words' kinds can be found without grammar rules, and the search over readings
+  costs nothing extra, because the frequency profiles already rule out the wrong readings.
+
+**60. Grid decipherment runs end to end, but its ceiling is low.**
+- *Why:* to check the new pipeline works on grid video before spending GPU time on a search, and
+  to measure the best it can do.
+- *How:*
+  - A smoke run (64 episodes, 4 iterations, the top 2 matchings by raw counts) to check the
+    whole pipeline, including scoring through the pair's hidden drawing key.
+  - Then the pilot's standard diagnostic: fit under the *true* matching (read from the hidden key,
+    so this measures the ceiling, not a result), at small scale (128 episodes, 6 iterations) and at
+    the pilot's full scale (512 episodes, 12 iterations). Script: `runs/queue/grid_truth.py`.
+  - A gate (`runs/queue/gate_grid.py`) ran the full search only if the full-scale ceiling decoded
+    at least 20% of frames exactly right.
+- *Result:* (frames exactly right, up to symmetry; then each part of the state)
+
+  | Run | Exact | Agent places | Hunger | Glass | Stone | Apple |
+  |---|---|---|---|---|---|---|
+  | Smoke, top 2 by counts (both wrong matchings) | 0.1% | 23-29% | 62-67% | 12-14% | 22-34% | 22-23% |
+  | True matching, 128 episodes, 6 iterations | 7.2% | 60-63% | 67-72% | 85% | 51% | 70% |
+  | True matching, 512 episodes, 12 iterations | 14.1% | 85-87% | 70% | 82% | 65% | 75% |
+  | Pilot pair 0, state vectors, true matching (entry 42) | 78.7% | | | | | |
+
+  The full-scale fit took 31 minutes. The gate held the search back.
+- *Meaning:*
+  - The pipeline works on grid video: it reads agents' places well (85-87%, against 25% by
+    chance) with nothing hand-written on the frame side.
+  - But whole frames are rarely right, because every part has to be right at once and hunger and
+    the objects are weak. Searching for the matching would be wasted GPU time until the ceiling is
+    higher.
+
+**61. Why hunger is weak: where a thing is and how it looks were one fact.**
+- *Why:* to find out whether the weakness is in the frame model or in how decipherment reads
+  frames.
+- *How:* sampled next frames from the grid frame model on 8,030 held-out steps and compared the
+  rate at which each unit switches on with the real data.
+- *Result:* the rates match closely for every unit (for example, an agent becoming hungry at a
+  place: 0.055 real, 0.057 sampled). 94% of sampled frames are valid; the rest draw some thing
+  twice.
+- *Meaning:* the frame model is fine. The problem is in the units of entry 58: "agent A at the
+  bush, drawn hungry" was one unit, so it switched on both when A *became hungry* at the bush and
+  when A *walked to* the bush already hungry. One word table had to explain both "Tofem is hungry"
+  and "Tofem goes to the bush". (In the state vectors, hunger was a separate value with its own
+  table.)
+- *Change:* units now keep where a thing is apart from how it looks: `("at", thing, place)` and
+  `("looks", thing, channel)`, still found from the frames alone. The full-scale ceiling run was
+  repeated with this change.
+- *Result of the change:* worse, not better: 7.3% of frames exactly right (against 14.1%); agent
+  places 71-78%, hunger 69-71%, glass 53%, stone 68%, apple 77%.
+- *Meaning of the change:* hunger didn't improve at all, so mixing "became hungry" with "walked
+  while hungry" was not the main cause. Something else is holding hunger back (entry 62).
+
+**62. The real cause: the frame model's own rollouts drift into impossible frames.**
+- *Why:* in the pilot, the language model's summaries were what made hunger readable (entry 33),
+  and grid decipherment uses them in the same way, so something specific to grid video must be
+  getting in the way.
+- *How:* rolled the grid frame model forward for 40 steps from 2,000 real start frames, feeding
+  it its own samples (as decipherment's particles do), and counted frames that break the
+  structure found in entry 58: a thing drawn twice, or a thing that is always on screen missing.
+- *Result:*
+
+  | Step | Valid at this step | Valid at every step so far |
+  |---|---|---|
+  | 1 | 92% | 92% |
+  | 5 | 83% | 70% |
+  | 10 | 76% | 51% |
+  | 20 | 75% | 30% |
+  | 40 | 71% | 14% |
+
+  The pilot's state-vector frame model gave 99.6% valid samples (entry 31).
+- *Meaning:* by the middle of an episode most particles are following impossible histories, in
+  which an agent may be drawn in two places or in both colours. Decipherment then reads hunger and
+  places from nonsense. This explains why every part of the state is weaker than in the pilot.
+- *Change:*
+  - Decipherment can now give no weight to candidate frames that break the frame stream's own
+    structure (option `valid_only`): nothing drawn outside the things, each thing drawn at most
+    once, and a thing that is on screen in every training frame drawn exactly once. This uses
+    only what entry 58 found from the frames; a particle with no valid candidate simply stays.
+  - Whether units keep place and appearance apart is now an option (`grid_units`: split or
+    joint), so the two designs can be compared fairly once impossible frames are excluded.
+  - Both designs were then compared under the true matching at medium scale (256 episodes, 8
+    iterations), with impossible candidates excluded.
+- *Result of the comparison:* joint units 9.0% of frames exactly right (agent places 71%, hunger
+  71-72%, glass 78%, stone 47%, apple 77%); split units 5.9%. Hunger stayed at about 70% in both.
+- *Meaning:* excluding impossible frames helps a little, and joint units are the better design,
+  but hunger is still barely read. Agents are hungry 59% of the time, so 70% is close to always
+  guessing "hungry".
+
+**63. Where hunger is lost: the evidence is there, the fit doesn't learn to use it.**
+- *Why:* to find out which part of decipherment fails to read hunger on grid video.
+- *How:* three diagnostics, all under the true matching (they use the hidden truth, so they are
+  diagnostics only):
+  1. *The summaries' evidence.* Each sentence's true state was drawn as a grid frame, the summary
+     Gaussian was fitted on true units (512 episodes), and on 300 held-out episodes the true frame
+     was compared with the same frame with one agent's hunger flipped, or one agent moved
+     (`runs/queue/grid_oracle.py`).
+  2. *The particle filter with that oracle Gaussian fixed* and the word tables at their starting
+     values, decoding the held-out episodes.
+  3. *The fit, traced:* the true-matching fit (joint units, impossible candidates excluded, 256
+     episodes, 12 iterations), scored on 64 held-out episodes after every iteration
+     (`runs/queue/grid_truth.py trace=1`).
+  4. *Words alone with oracle tables:* word tables fitted on the true paths, then decoding from
+     words alone (`runs/queue/grid_oracle_words.py`).
+- *Result:*
+  1. The summaries prefer the true frame over the hunger-flipped one 97% of the time, and over
+     the moved one 98%.
+  2. With the oracle Gaussian the particle filter decodes **64% of frames exactly right**, with
+     agent places 96-97%, hunger 92-94%, glass 89%, stone 95%, apple 93%.
+  3. The traced fit: words alone (iterations 1-4) leave agent places at 35-37%; once the
+     summaries are used (iteration 5 on), places climb steadily to 0.91 by iteration 12, the
+     glass to 0.87 and the apple to 0.84, but hunger stays at 0.72-0.74 throughout and the stone
+     at 0.30-0.49. 15.9% of frames exactly right at iteration 12.
+  4. Words alone with oracle tables: hunger 67-72%, agent places 60-67%, under either design.
+- *Meaning:*
+  - The language model's summaries hold hunger, and the particle filter and the grid frame model
+    can follow it: with the right summary Gaussian the grid pipeline comes close to the pilot.
+  - What fails is learning that Gaussian. It is fitted to the fit's own sampled paths. Words alone
+    hardly anchor hunger, so the early paths get hunger at random, the Gaussian learns that
+    hunger doesn't matter, and nothing ever corrects it. Places escape this trap because words
+    anchor them well enough to start.
+  - In the pilot the same bootstrapping did reach hunger (entry 33). The likely difference is the
+    pilot's "acted" flags, which tied each step to one agent; grid video has none, so "Tofem is
+    hungry" can't be pinned to the right agent's change as easily. [TBD: test.]
+
+**64. The full search on grid pair 0 (no truth used).**
+- *Why:* the question for this step is whether the general search, with the frame structure and
+  the word kinds found from each stream alone and the agents' order left free, picks the true
+  matching on grid video, even while the fit's accuracy is limited by hunger (entry 63).
+- *How:* `runs/pilot-grid/configs/search.yaml`: 17,280 candidate matchings (6 readings of the word
+  classes, every order of the words). The 24 closest by raw counts were each fitted briefly (128
+  episodes, 4 iterations) and scored on 128 selection episodes; the best 4 were fitted in full
+  (512 episodes, 12 iterations) and the one that best explains the selection episodes was kept.
+  Joint units, impossible candidates excluded. Fewer finalists than the pilot's 6, to keep the
+  night within its GPU budget.
+- *Result:*
+  - Screening took 72 minutes (about 3 minutes per matching). By raw counts the true matching was
+    8th and its agent-swapped twin 7th; their counts are identical, as every agent-swapped pair's
+    are. After screening they were 6th (14.997) and 10th (14.930), so neither reached the 4
+    finalists. The screening winner (15.212) had all four places right but the stone and apple
+    words swapped. Of the top 6 after screening, 4 had all four places right. Full table:
+    `runs/pilot-grid/pair-000/align/screening-report.json`.
+  - Agent-swapped twins, which should tie, differed by up to 0.17 in screening score, about as
+    much as right and wrong matchings did. So a short fit is too noisy to choose on.
+  - The search was stopped after screening, since its 4 finalists were all wrong matchings and
+    fitting them would only have chosen among them. The GPU time went to entry 65 instead.
+- *Meaning:*
+  - The general search runs end to end on grid video with nothing hand-written, and it leaves the
+    agents' order free (twins are always screened together).
+  - Screening finds the places but not the objects, and its noise is as large as the differences
+    it has to detect. With the fit's accuracy limited by hunger (entry 63), a short fit sees too
+    little to separate matchings.
+
+**65. The objective diagnostic: does the full fit prefer the true matching?**
+- *Why:* the proposal's objective diagnostic (design step 7). If the full-scale selection score
+  prefers the true matching over the screening winners, the search only needs a better screen; if
+  not, the objective itself can't yet tell matchings apart on grid video.
+- *How:* full fits (512 episodes, 12 iterations, exactly as the search's finalists) of the true
+  matching, its agent-swapped twin, and the two screening winners, each scored on the 128
+  selection episodes (`runs/queue/grid_objective.py`). The truth is used only to choose which
+  matchings to fit.
+  - Run as one process, the second fit ran about 3.5 times slower: the GPU's memory had filled to
+    7,976 of 8,192 MiB, and Windows was likely moving memory out to the computer's main memory.
+    It was stopped and each remaining fit run in its own process. The second screening winner
+    was dropped to stay within the night's GPU budget. The search now releases GPU memory after
+    every fit (`_free_gpu` in `align/decipher.py`); that hasn't yet been tested at full scale.
+- *Result:*
+
+  | Matching | Selection score (seeds) | Frames exactly right | Agent places | Hunger | Objects |
+  |---|---|---|---|---|---|
+  | True (rank 8) | 16.995 (17.040, 16.950) | 14.6% | 87-90% | 70% | glass 87%, stone 52%, apple 79% |
+  | Screening winner (rank 16): places right, all three object words wrong | **17.103** (17.099, 17.106) | 0.5% | 86-88% | 68-70% | 14-22% |
+  | True, agents swapped (rank 7) | 17.021 (17.059, 16.982) | 15.9% | 26% (read as swapped, as expected) | 64-65% | glass 74%, stone 43%, apple 78% |
+
+- *Meaning:*
+  - **The objective prefers a wrong matching.** The screening winner beats the truth by 0.11,
+    more than the seeds' spread (under 0.1), while getting every object wrong. Getting the objects
+    wrong costs the fit almost nothing, because what it has learned to use is the agents' places;
+    hunger and the objects carry little weight in it (entry 63).
+  - In the proposal's terms (design step 7), the found mapping scores better than the truth, so
+    this error counts as "the models encode the world differently", but here the difference is
+    in the aligner's own learned model, not in the trained models. The method has to be fixed
+    before any search on grid video can succeed. A better screen alone would not be enough.
+  - **The true matching and its agent-swapped twin tie** (16.995 and 17.021, a gap of 0.026,
+    well inside the seeds' spread of about 0.09), as the agent symmetry predicts. With the
+    agents' order left free, the tie is measured rather than decided by numbering: the first such
+    measurement on grid video.
+
+**66. Does marking who acted let the fit learn hunger?**
+- *Why:* entry 63's leading explanation: the pilot's state vectors marked who acted on every
+  step, which tied each step's changes to one agent; grid video marks nothing. You allowed
+  radical changes to the renderer, so this tests the explanation directly.
+- *How:* a renderer option (`grid_actor`) adds one channel, shared by both agents so the symmetry
+  survives, that marks the cell of the agent that acted. Pair `runs/pilot-grid-actor/pair-000`
+  (root seed 0: the same language stream and episodes). The general procedure of entry 58 finds
+  the mark as a sixth thing, with units such as "the mark shares a cell with agent B", meaning B
+  acted, and no word names it. Then the traced true-matching fit of entry 63 (joint units,
+  impossible candidates excluded, 256 episodes, 12 iterations).
+- *Result:*
+  - The marked frame model trained in 7.8 minutes (held-out loss 0.0146 per value), but its own
+    rollouts drift into impossible frames even faster: 84% valid at the first step, 56% at step 10,
+    and only 1% of 40-step rollouts valid throughout (unmarked: 14%).
+  - The traced fit: at iteration 12, 14.8% of frames exactly right (unmarked, entry 63: 15.9%),
+    agent places 78-82%, **hunger 72-75%** (unmarked: 73-74%), glass 76%, stone 64%, apple 78%.
+- *Meaning:*
+  - **Marking who acted doesn't help the fit learn hunger.** Entry 63's leading explanation is
+    ruled out: the missing actor mark is not why grid video fails where state vectors worked.
+  - This fits the decision taken this morning: grid video stays unmarked, and the fix has to come
+    from inside the method, from how the fit learns its summary model. The option `grid_actor`
+    stays in the code as a diagnostic only.

@@ -8,12 +8,12 @@ Layout of a pair's data directory:
 
     lang.npz            tokens, episode_start, held_out
     lang_tokens.json    token strings, in token-number order
-    obs.npz             frames, episode_start, held_out
+    obs.npz             frames, episode_start, held_out (and shape, for grid video)
     run.json            config, seed, git commit, package versions
     hidden/             ground truth: read only by grounding.analysis
       lang_labels.npz   what each sentence reports, and every episode's states
       obs_labels.npz    every frame's true state and acting agent
-      key.json          the vocabulary and the slot shuffle
+      key.json          the vocabulary and the slot shuffle (or, for grid video, the drawing key)
 
 Training code reads only the top level (``grounding.data.load``). Everything
 that would reveal the true meaning of a token or slot is under ``hidden/``.
@@ -27,6 +27,7 @@ import numpy as np
 
 from grounding.data.config import CorpusConfig
 from grounding.data.tokens import EPISODE, STOP, make_tokens
+from grounding.render.grid.frames import EpisodeRenderer, GridKey, grid_shape
 from grounding.render.lang.grammar import KINDS, Language, make_vocab
 from grounding.render.state.vector import encode
 from grounding.runs.record import make_record, write_record
@@ -37,7 +38,7 @@ from grounding.sim.worlds import make_world
 
 # Named random parts of each stream. Only ever append (see part_rngs).
 LANG_PARTS = ("vocab", "tokens", "sim", "render", "split", "train")
-OBS_PARTS = ("slots", "sim", "split", "train")
+OBS_PARTS = ("slots", "sim", "split", "train", "grid")
 PARTS = {"lang": LANG_PARTS, "obs": OBS_PARTS}
 HIDDEN = "hidden"
 
@@ -121,6 +122,8 @@ def build_lang(world: World, cfg: CorpusConfig, root: int):
 
 
 def build_obs(world: World, cfg: CorpusConfig, root: int):
+    if cfg.observation == "grid":
+        return build_grid(world, cfg, root)
     r = part_rngs(root, "obs", OBS_PARTS)
     shuffle = Relabel.random(world, r["slots"])
     episodes = simulate(world, cfg, r["sim"])
@@ -147,6 +150,37 @@ def build_obs(world: World, cfg: CorpusConfig, root: int):
     return built, key
 
 
+def build_grid(world: World, cfg: CorpusConfig, root: int):
+    """Grid-video frames (``grounding.render.grid.frames``). The same episodes as state vectors
+    would get, since the simulation uses the same random part; only the drawing differs."""
+    r = part_rngs(root, "obs", OBS_PARTS)
+    key = GridKey.random(world, r["grid"], mark_actor=cfg.grid_actor)
+    episodes = simulate(world, cfg, r["sim"])
+    draw_rng = np.random.default_rng(r["grid"].integers(2**63))
+
+    frames, states, actors, lengths = [], [], [], []
+    for start, steps in episodes:
+        pen = EpisodeRenderer(world, key, draw_rng)
+        frames.append(pen.start(start))
+        actors.append(-1)
+        for e, s in steps:
+            frames.append(pen.step(s, e.agent))
+            actors.append(e.agent)
+        states.append(episode_states(start, steps))
+        lengths.append(len(steps) + 1)
+
+    built = _Built(
+        public={
+            "frames": np.stack(frames),
+            "episode_start": _offsets(lengths),
+            "held_out": split(len(episodes), cfg.held_out, r["split"]),
+            "shape": np.array(grid_shape(world, key), dtype=np.int64),
+        },
+        labels={"states": np.concatenate(states), "actors": np.array(actors, dtype=np.int8)},
+    )
+    return built, {"grid": key.as_dict()}
+
+
 def generate_pair(cfg: CorpusConfig, root: int, out: Path) -> Path:
     """Build both streams of one pair from root seed ``root`` and write them to ``out``."""
     out = Path(out)
@@ -156,7 +190,7 @@ def generate_pair(cfg: CorpusConfig, root: int, out: Path) -> Path:
     world = make_world(cfg.world, **cfg.world_args)
 
     lang, tokens, lang_key = build_lang(world, cfg, root)
-    obs, slot_key = build_obs(world, cfg, root)
+    obs, obs_key = build_obs(world, cfg, root)
 
     np.savez_compressed(out / "lang.npz", **lang.public)
     (out / "lang_tokens.json").write_text(json.dumps(list(tokens.words)), encoding="utf-8")
@@ -166,8 +200,8 @@ def generate_pair(cfg: CorpusConfig, root: int, out: Path) -> Path:
     key = {
         "world": {"agents": world.agents, "objects": world.objects, "places": world.places},
         "lang": lang_key,
-        "obs_slots": slot_key,
     }
+    key |= obs_key if "grid" in obs_key else {"obs_slots": obs_key}
     (out / HIDDEN / "key.json").write_text(json.dumps(key, indent=2), encoding="utf-8")
     write_record(out, make_record(cfg.as_dict(), root))
     return out
