@@ -13,6 +13,8 @@ LOCK = Path(__file__).resolve().parents[3] / "prereg" / "LOCK"
 # name -> whether it is a main condition. Add every new condition here.
 CONDITIONS: dict[str, bool] = {
     "pilot": False,
+    "pilot-grid": False,  # phase 3, step 1: grid video in the pilot world
+    "pilot-grid-actor": False,  # the same, with the acting agent's cell marked (entry 66)
 }
 
 

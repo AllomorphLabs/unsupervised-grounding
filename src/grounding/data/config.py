@@ -15,7 +15,8 @@ class CorpusConfig:
     ``min_len`` to ``max_len`` inclusive, the same for both streams
     (technical decision 12). ``held_out`` is the share of each stream's
     episodes kept back for scoring. ``recap`` is the chance of a past-tense
-    recap after each step of the language stream.
+    recap after each step of the language stream. ``observation`` is how the
+    observation stream is drawn: ``state`` (state vectors) or ``grid`` (grid video).
     """
 
     world: str
@@ -24,6 +25,8 @@ class CorpusConfig:
     max_len: int = 60
     held_out: float = 0.1
     recap: float = 0.1
+    observation: str = "state"
+    grid_actor: bool = False  # grid video only: mark the cell of the agent that acted
     world_args: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -35,6 +38,8 @@ class CorpusConfig:
             raise ValueError("held_out must be in [0, 1)")
         if not 0 <= self.recap <= 1:
             raise ValueError("recap must be in [0, 1]")
+        if self.observation not in ("state", "grid"):
+            raise ValueError(f"unknown observation {self.observation!r}; use state or grid")
 
     def lengths(self) -> dict[int, float]:
         """The episode-length distribution, as used for visit weights."""

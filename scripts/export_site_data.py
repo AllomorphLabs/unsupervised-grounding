@@ -8,6 +8,8 @@ Reads the pilot pairs' scored decipherment runs and writes two JSON files:
 - sample.json: a sample of real held-out language episodes from pair 2 (the untouched
   confirmation pair), each sentence with its words, a word-by-word gloss, the state the
   method decoded it to and the true state;
+- grid.json: a short run of real grid-video frames from grid pair 0 (held out), with display
+  labels from the hidden key and a caption for each change, for illustration only;
 - models.json: the architecture of pair 2's two trained models, with the number of learned
   parameters in each part, read from the saved weights, and a real token sequence.
 
@@ -22,10 +24,11 @@ from pathlib import Path
 
 import numpy as np
 
-from grounding.analysis.labels import load_key, load_lang_labels
+from grounding.analysis.labels import load_key, load_lang_labels, load_obs_labels
 from grounding.analysis.score import _world_spec, lang_truth, relabel_states
 from grounding.data.load import load_lang, load_obs
 from grounding.models.train import load_model
+from grounding.render.grid.frames import GridKey, place_cells
 from grounding.render.lang.grammar import KINDS
 from grounding.render.state.vector import decode as read_frame
 from grounding.render.state.vector import encode
@@ -286,10 +289,102 @@ def models() -> dict:
     }
 
 
+GRID_PAIR = PILOT.parent / "pilot-grid" / "pair-000"
+GRID_FRAMES = 6
+
+
+def _caption(world, names: list[str], a, b) -> str:
+    """What changed between two states, in plain English (for the reader only)."""
+    n = len(world.agents)
+    out = []
+    for i in range(n):
+        if a.pos[i] != b.pos[i]:
+            out.append(f"{names[i]} goes to the {world.places[b.pos[i]]}")
+        if not a.hungry[i] and b.hungry[i]:
+            out.append(f"{names[i]} gets hungry")
+        if a.hungry[i] and not b.hungry[i]:
+            out.append(f"{names[i]} eats")
+    for o, (old, new) in enumerate(zip(a.loc, b.loc, strict=True)):
+        thing = world.objects[o]
+        if old == new:
+            continue
+        if new[0] == HELD:
+            out.append(f"{names[new[1]]} takes the {thing}")
+        elif new[0] == BROKEN:
+            out.append(f"the {thing} is dropped and breaks")
+        elif new[0] == AT and old[0] == HELD:
+            out.append(f"the {thing} is dropped")
+        elif new[0] == GONE and not any("eats" in x for x in out):
+            out.append(f"the {thing} is eaten")
+    if not out:
+        return "nothing visible changes (someone waits)"
+    text = "; ".join(out)
+    return text[0].upper() + text[1:]
+
+
+def grid() -> dict:
+    """A short real clip of grid video. The labels and captions use the hidden key and truth, so
+    they are for the reader only; the frame model sees just the cells."""
+    data = GRID_PAIR / "data"
+    key = load_key(data)
+    gk = GridKey.from_dict(key["grid"])
+    world = make_world(**_world_spec(GRID_PAIR))
+    obs, labels = load_obs(data), load_obs_labels(data)
+    names = [key["lang"]["stems"][a].capitalize() for a in world.agents]
+    rows, cols, n_ch = obs.shape
+    look = {}
+    for i, (normal, hungry) in enumerate(gk.agent):
+        look[normal] = {"who": names[i], "kind": "agent", "agent": i, "hungry": False}
+        look[hungry] = {"who": names[i], "kind": "agent", "agent": i, "hungry": True}
+    for o, (intact, broken) in enumerate(gk.obj):
+        look[intact] = {"who": world.objects[o], "kind": "object", "broken": False}
+        if broken >= 0:
+            look[broken] = {"who": world.objects[o], "kind": "object", "broken": True}
+    held = np.flatnonzero(obs.held_out)
+    ends = np.append(obs.episode_start[1:], len(obs.frames))
+
+    def clip(e):
+        s0 = int(obs.episode_start[e])
+        st = [state_from_array(world, labels.states[s0 + t]) for t in range(GRID_FRAMES)]
+        caps = [_caption(world, names, st[t - 1], st[t]) for t in range(1, GRID_FRAMES)]
+        return s0, st, caps
+
+    # The first held-out episode whose opening steps show at least four visible changes,
+    # including a take or an agent getting hungry: chosen by what happens, not by how it decodes.
+    for e in held:
+        if ends[e] - obs.episode_start[e] <= GRID_FRAMES + 2:
+            continue
+        start, states, caps = clip(e)
+        visible = sum("nothing visible" not in c for c in caps)
+        if visible >= 4 and any("takes" in c or "hungry" in c for c in caps):
+            break
+    frames, captions = [], []
+    for t in range(GRID_FRAMES):
+        f = obs.frames[start + t].reshape(rows * cols, n_ch)
+        cells = []
+        for c in np.flatnonzero(f.any(1)):
+            cells.append({"cell": int(c), "things": [look[int(ch)] for ch in np.flatnonzero(f[c])]})
+        frames.append(cells)
+        captions.append("Start" if t == 0 else _caption(world, names, states[t - 1], states[t]))
+    patches = [
+        {"place": world.places[p], "cells": place_cells(world, p, gk)}
+        for p in range(len(world.places))
+    ]
+    return {
+        "pair": "pilot-grid/pair-000",
+        "rows": rows,
+        "cols": cols,
+        "values": rows * cols * n_ch,
+        "patches": patches,
+        "frames": frames,
+        "captions": captions,
+    }
+
+
 def main() -> None:
     out = Path(sys.argv[1])
     out.mkdir(parents=True, exist_ok=True)
-    data = {"results": results(), "sample": sample(), "models": models()}
+    data = {"results": results(), "sample": sample(), "models": models(), "grid": grid()}
     for name, part in data.items():
         (out / f"{name}.json").write_text(json.dumps(part, separators=(",", ":")), "utf-8")
     for r in data["results"]:

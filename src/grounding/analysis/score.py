@@ -23,7 +23,8 @@ Reported, for the selected restart and for every restart:
 The condition must pass the pre-registration firewall first.
 
 ``--kind decipher`` scores ``grounding.align.decipher`` instead: each finalist's decoded frame at
-every held-out sentence end is read back into a state (with the pair's hidden slot shuffle) and
+every held-out sentence end is read back into a state (with the pair's hidden slot shuffle, or for
+grid video its hidden drawing key) and
 compared with the truth in the same way. The selected finalist is the result; the others are
 reported alongside, so wrong matchings' accuracy is visible too.
 """
@@ -37,6 +38,8 @@ import torch
 
 from grounding.align.run import AlignConfig, load_fitted, points, sample_episodes
 from grounding.analysis.labels import load_key, load_lang_labels, load_obs_labels
+from grounding.render.grid.frames import GridKey
+from grounding.render.grid.frames import decode as read_grid
 from grounding.render.lang.grammar import KINDS
 from grounding.render.state.vector import decode as read_frame
 from grounding.runs.conditions import check_can_analyse
@@ -169,8 +172,18 @@ def score_decipher(pair: Path, name: str = "decipher") -> dict:
     world = make_world(**_world_spec(pair))
     if list(world.agents) != key["world"]["agents"]:
         raise ValueError("world in the run record doesn't match the pair's key")
-    slots = key["obs_slots"]
-    shuffle = Relabel(tuple(slots["agents"]), tuple(slots["objects"]), tuple(slots["places"]))
+    if "grid" in key:
+        gkey = GridKey.from_dict(key["grid"])
+
+        def read(f):
+            return read_grid(world, f, gkey)
+    else:
+        slots = key["obs_slots"]
+        shuffle = Relabel(tuple(slots["agents"]), tuple(slots["objects"]), tuple(slots["places"]))
+
+        def read(f):
+            return read_frame(world, f, shuffle)
+
     group = automorphisms(world)
     folder = pair / "align" / name
     summary = json.loads((folder / "summary.json").read_text(encoding="utf-8"))
@@ -180,7 +193,7 @@ def score_decipher(pair: Path, name: str = "decipher") -> dict:
         with np.load(folder / f"finalist-{row['finalist']}.npz") as z:
             frames, positions = z["frames"], z["positions"]
         truth = lang_truth(data, positions)
-        predicted = np.stack([state_to_array(read_frame(world, f, shuffle)) for f in frames])
+        predicted = np.stack([state_to_array(read(f)) for f in frames])
         out = {"finalist": row["finalist"], "score": row["score"]}
         out |= score_predictions(world, group, predicted, truth)
         out["chance"] = score_predictions(

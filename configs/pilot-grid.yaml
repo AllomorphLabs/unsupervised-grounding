@@ -1,0 +1,10 @@
+# The grid-video pilot (phase 3, step 1): the pilot world, with the observation stream drawn as
+# grid video instead of state vectors. Pair k uses root seed k, so its language stream is
+# identical to pilot pair k's (only the observation stream's drawing differs).
+world: pilot
+episodes: 50000  # per stream
+min_len: 20
+max_len: 60
+held_out: 0.1
+recap: 0.1
+observation: grid

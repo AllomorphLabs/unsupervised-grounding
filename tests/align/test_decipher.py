@@ -191,3 +191,10 @@ def test_decipher_runs_without_a_frame_model(pair):
     cfg = replace(TINY, frame_model=COUNTS, summary_from=99, shortlist=1)
     summary = decipher_pair(pair, cfg, device="cpu", name="counts", log=lambda s: None)
     assert len(summary["finalists"]) == 1
+
+
+def test_agent_orders_all_adds_every_agent_order(pair):
+    fixed = Decipherer(pair, replace(TINY, agent_orders="fixed"), "cpu").matchings()
+    every = Decipherer(pair, replace(TINY, agent_orders="all"), "cpu").matchings()
+    assert len(every) == 2 * len(fixed)
+    assert {m.agents for m in every} == {fixed[0].agents, fixed[0].agents[::-1]}

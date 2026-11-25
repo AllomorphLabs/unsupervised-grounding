@@ -36,7 +36,7 @@ import argparse
 import itertools
 import json
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -45,6 +45,8 @@ import yaml
 
 from grounding.align.run import ALIGN_PARTS
 from grounding.align.structure import FrameLayout, WordTypes, _transitions, frame_layout, word_types
+from grounding.align.units import UnitView, find_units
+from grounding.align.words import Roles, role_options, word_classes
 from grounding.data.load import LangStream, load_lang, load_obs
 from grounding.data.tokens import EPISODE, STOP
 from grounding.models.train import load_model
@@ -74,6 +76,23 @@ class DecipherConfig:
     freeze_mixture: int = 8  # iteration from which the mixture weights stay fixed
     update_paths: int = 8  # particle paths per episode used in each update
     shortlist: int = 6
+    # Screening (0: off): the ``screen`` matchings closest by raw counts each get a short fit
+    # (``screen_episodes``, ``screen_iterations``), and the ``shortlist`` that best explain the
+    # selection episodes go on to the full fit. Raw counts alone can't tell some matchings apart.
+    screen: int = 0
+    screen_episodes: int = 128
+    screen_iterations: int = 4
+    # How words are sorted into kinds (grid video only): "rules", the pilot's grammar rules
+    # (structure.word_types), or "classes", found from the language stream alone (align.words).
+    word_kinds: str = "rules"
+    # State vectors: "fixed" keeps the agents in one order (the pilot, decision 19); "all" searches
+    # every order (decision 22). Grid video always searches every order.
+    agent_orders: str = "fixed"
+    # Grid video only. grid_units: "split" keeps where a thing is apart from how it looks;
+    # "joint" makes each place-and-appearance one unit (align.units). valid_only: candidate frames
+    # that break the frame stream's own structure (a thing drawn twice) get no weight.
+    grid_units: str = "split"
+    valid_only: bool = False
     seed: int = 0  # restart seed for a fit's random draws; restarts measure variance
 
     @classmethod
@@ -277,6 +296,8 @@ class Decipherer:
         self.layout: FrameLayout = frame_layout(obs)
         self.types: WordTypes = word_types(self.lang)
         self.V, self.d, self.J = len(self.lang.words), self.layout.size, cfg.sentence_tokens
+        # Emissions read a frame through ``view``; for state vectors its units are the values.
+        self.U, self.view, self.own_classes = self.d, (lambda f: f), (0, 2, 4)
         if cfg.frame_model == COUNTS:
             self.fm = CountedFrames(obs, device)
             self.ctx = self.fm.ctx
@@ -329,10 +350,18 @@ class Decipherer:
         )
 
     def matchings(self) -> list[Matching]:
-        """Every matching, with agents in a fixed order (their swap is a symmetry)."""
+        """Every matching. With ``agent_orders: fixed`` (the pilot) the agents keep one order, so
+        their swap is decided by numbering; with ``all`` every order is a candidate."""
         t = self.types
+        if self.cfg.agent_orders == "all":
+            agent_orders = [tuple(a) for a in itertools.permutations(t.agents)]
+        elif self.cfg.agent_orders == "fixed":
+            agent_orders = [tuple(t.agents)]
+        else:
+            raise ValueError(f"unknown agent_orders {self.cfg.agent_orders!r}")
         return [
-            Matching(t.agents, tuple(o), tuple(p))
+            Matching(a, tuple(o), tuple(p))
+            for a in agent_orders
             for o in itertools.permutations(t.objects)
             for p in itertools.permutations(t.places)
         ]
@@ -344,6 +373,7 @@ class Decipherer:
         for i, c in enumerate(combos):
             S[i, list(c)] = 1
         self.start, self.start_n = S, S / S.sum(1, keepdim=True)
+        self.start_u = S
 
     def _actor_tensors(self) -> None:
         lay = self.layout
@@ -352,6 +382,10 @@ class Decipherer:
         self.pid_v = [
             torch.tensor([lay.values[v][2] for v in b], device=self.dev) for b, _, _ in lay.agents
         ]
+
+    def valid(self, c: torch.Tensor) -> torch.Tensor | None:
+        """Which candidate frames may be used (None: all). State vectors: all."""
+        return None
 
     def actor_place(self, c: torch.Tensor) -> torch.Tensor:
         """Place id of the acting agent in each frame, or -1 if none acted."""
@@ -447,26 +481,27 @@ class Fit:
         self.tying_ = D.tying(m)
         self.gauss: Gauss | None = None
         self.frozen = False
-        J, V, d, dev = D.J, D.V, D.d, D.dev
+        J, V, dev = D.J, D.V, D.dev
         wc = D.word_counts.copy()
         wc[[D.lang.words.index(STOP), D.lang.words.index(EPISODE)]] = 0  # never inside a sentence
         unigram = torch.tensor(wc / wc.sum(), dtype=torch.float32, device=dev)
-        own = ((self.tying_[1] == 0) | (self.tying_[1] == 2) | (self.tying_[1] == 4)).float()
+        own = torch.isin(self.tying_[1], torch.tensor(D.own_classes, device=dev)).float()
         gen = torch.Generator(device=dev).manual_seed(D.cfg.seed)
-        noise = 1 + 0.1 * torch.rand(J, 3 * d + 1, V, device=dev, generator=gen)
+        U = D.U
+        noise = 1 + 0.1 * torch.rand(J, 3 * U + 1, V, device=dev, generator=gen)
         cnt = (1 + D.cfg.own_prior * own)[None] * noise
         lam = torch.tensor([0.45, 0.25, 0.2, 0.1], device=dev)[None].repeat(J, 1)
-        self.t = Tables(unigram[None].repeat(J, 1), None, None, lam, cnt[:, :d], cnt[:, d:])
+        self.t = Tables(unigram[None].repeat(J, 1), None, None, lam, cnt[:, :U], cnt[:, U:])
         self.project()
 
     def project(self) -> None:
         D = self.D
-        self.t.ps = D.tie(self.t.cs, torch.arange(D.d, device=D.dev), self.tying_)
-        self.t.pc = D.tie(self.t.cc, torch.arange(D.d, 3 * D.d + 1, device=D.dev), self.tying_)
+        self.t.ps = D.tie(self.t.cs, torch.arange(D.U, device=D.dev), self.tying_)
+        self.t.pc = D.tie(self.t.cc, torch.arange(D.U, 3 * D.U + 1, device=D.dev), self.tying_)
 
     # -- emissions -------------------------------------------------------------------------------
-    @staticmethod
-    def feats(prev: torch.Tensor, cur: torch.Tensor):
+    def feats(self, prev: torch.Tensor, cur: torch.Tensor):
+        prev, cur = self.D.view(prev), self.D.view(cur)
         fs = cur / cur.sum(1, keepdim=True).clamp(min=1)
         on, off = (cur - prev).clamp(min=0), (prev - cur).clamp(min=0)
         dc = torch.cat([on, off, ((on.sum(1) + off.sum(1)) == 0).float()[:, None]], 1)
@@ -530,7 +565,7 @@ class Fit:
         moved_t = torch.zeros(R, Tm, dtype=torch.bool, device=dev)
         h = D.fm.context(hist[:, :1])[:, 0]
         if G is not None:
-            MS = G.mean(D.start)
+            MS = G.mean(D.start_u)
         no = torch.zeros(R, dtype=torch.bool, device=dev)
         for t in range(1, Tm):
             rt = real[t][ep]
@@ -548,6 +583,7 @@ class Fit:
             q = torch.where(L >= D.ctx, torch.ones_like(q), q)
             e_stay = self.emit_words(tk, cur, cur, no, torch.full((R,), D.V, device=dev))
             cand = D.fm.sample_next(h.repeat_interleave(M, 0), gen)
+            ok_c = D.valid(cand)
             aw = D.actor_word(cand, self.places_t)
             e_mv = self.emit_words(
                 tk.repeat_interleave(M, 0),
@@ -559,8 +595,8 @@ class Fit:
             E0z = E0 if un.any() else None
             if G is not None:
                 zt = b.z[t][ep]
-                ls_ = kappa * G.logp(cur, zt)
-                lm_ = kappa * G.logp(cand, zt.repeat_interleave(M, 0)).reshape(R, M)
+                ls_ = kappa * G.logp(D.view(cur), zt)
+                lm_ = kappa * G.logp(D.view(cand), zt.repeat_interleave(M, 0)).reshape(R, M)
                 mx = torch.maximum(
                     ls_.reshape(Be, N).max(1).values, lm_.reshape(Be, -1).max(1).values
                 )
@@ -574,6 +610,8 @@ class Fit:
                 ll = ll + mx * real[t]
             if un.any():
                 e_stay = torch.where(un, (alpha0 * E0z).sum(1)[ep], e_stay)
+            if ok_c is not None:
+                e_mv = e_mv * ok_c.reshape(R, M).float()
             contrib = torch.cat([(q * e_stay)[:, None], (1 - q)[:, None] * e_mv / M], 1)
             contrib = torch.nan_to_num(contrib, nan=0.0, posinf=0.0).clamp(min=0) + 1e-300
             w = torch.where(rt, contrib.sum(1), torch.ones(R, device=dev))
@@ -636,7 +674,7 @@ class Fit:
 
     def update(self, paths, it: int) -> None:
         D, t = self.D, self.t
-        J, V, d, dev = D.J, D.V, D.d, D.dev
+        J, V, d, dev = D.J, D.V, D.U, D.dev
         c0 = torch.zeros(J, V, device=dev)
         cs = torch.zeros(J, d, V, device=dev)
         cc = torch.zeros(J, 2 * d + 1, V, device=dev)
@@ -645,7 +683,7 @@ class Fit:
         for tok, prev, cur, m, actw, z in self._items(paths):
             fs, dc = self.feats(prev, cur)
             if z is not None:
-                X.append(cur)
+                X.append(D.view(cur))
                 Y.append(z)
             for j in range(J):
                 l0, ls, lc, la = t.lam[j].tolist()
@@ -793,18 +831,18 @@ class SentenceFit(Fit):
         for j in range(D.J):
             m0, m1, _ = t.lam[j].tolist()
             s = (m0 * t.p0[j][None] + m1 * t.ps[j]) / (m0 + m1)
-            out.append(torch.cat([s, torch.ones(D.d, 1, device=D.dev)], 1))
+            out.append(torch.cat([s, torch.ones(D.U, 1, device=D.dev)], 1))
         return out
 
     def start_emit(self, TS, tok_t):
-        G = torch.ones(tok_t.shape[0], self.D.d, device=self.D.dev)
+        G = torch.ones(tok_t.shape[0], self.D.U, device=self.D.dev)
         for j in range(tok_t.shape[1]):
             G = G * TS[j][:, tok_t[:, j]].T
         return G @ self.D.start_n.T  # Be x K: the average over each start frame's values
 
     def update(self, paths, it: int) -> None:
         D, t = self.D, self.t
-        J, V, d, dev = D.J, D.V, D.d, D.dev
+        J, V, d, dev = D.J, D.V, D.U, D.dev
         F = 3 * d + 1
         c0 = torch.zeros(J, V, device=dev)
         cT = torch.zeros(J, F, V, device=dev)
@@ -813,7 +851,7 @@ class SentenceFit(Fit):
         X, Y = [], []
         for tok, prev, cur, m, actw, z in self._items(paths):
             if z is not None:
-                X.append(cur)
+                X.append(D.view(cur))
                 Y.append(z)
             w, (a, b, c, scale, ok, P) = self._weights(tok, prev, cur, m, actw)
             r = w / w.sum(1, keepdim=True).clamp(min=1e-300)  # n x F: which feature is the focus
@@ -846,12 +884,218 @@ class SentenceFit(Fit):
         return {**super().state(), "sig": self.sig.cpu()}
 
 
-def make_fit(D: Decipherer, m: Matching) -> Fit:
+# ---------------------------------------------------------------------------------------------
+# Grid video: frames read through units found from the frame stream alone
+# ---------------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class GridMatching:
+    """Which word names each thing found in the frames, and each place."""
+
+    things: tuple[int, ...]
+    places: tuple[int, ...]
+
+
+class GridDecipherer(Decipherer):
+    """Decipherment of a grid-video stream (``grounding.align.units``).
+
+    Emissions and the summary Gaussian read each frame as units: a thing at a place, a thing's
+    appearance, two things in one cell, a thing gone. A matching names the things and the places,
+    with no frame-side notion of agent or object: any entity word may name any thing, so the
+    agents' order is free. Nothing marks who acted in grid video, so there is no actor component.
+    """
+
+    def __init__(self, pair: Path, cfg: DecipherConfig, device: str):
+        self.pair, self.cfg, self.dev = Path(pair), cfg, device
+        self.lang, obs = load_lang(self.pair / "data"), load_obs(self.pair / "data")
+        if cfg.grid_units not in ("split", "joint"):
+            raise ValueError(f"unknown grid_units {cfg.grid_units!r}")
+        self.units = find_units(obs, split=cfg.grid_units == "split")
+        self.view = UnitView(self.units, device)
+        n_things, n_places = len(self.units.things), self.units.places
+        if cfg.word_kinds == "classes":
+            self.classes = word_classes(self.lang)
+            self.roles = role_options(self.classes, n_things, n_places) or role_options(
+                self.classes, n_things - 1, n_places
+            )  # allowing one thing that no word names, such as a mark of who acted (entry 66)
+        elif cfg.word_kinds == "rules":
+            self.types: WordTypes = word_types(self.lang)
+            t = self.types
+            self.roles = [Roles(tuple(t.agents) + tuple(t.objects), tuple(t.places))]
+        else:
+            raise ValueError(f"unknown word_kinds {cfg.word_kinds!r}")
+        if not self.roles:
+            raise ValueError(f"no word classes fit {n_things} things and {n_places} places")
+        self.V, self.d, self.J = len(self.lang.words), self.units.size, cfg.sentence_tokens
+        self.U, self.own_classes = self.units.n, (0, 2)
+        if cfg.frame_model == COUNTS:
+            raise ValueError("the counted-transitions control isn't implemented for grid video yet")
+        self.fm = load_model(self.pair / "models" / cfg.frame_model, device)
+        for p in self.fm.parameters():
+            p.requires_grad_(False)
+        self.ctx = self.fm.backbone.cfg.context
+        stop = self.lang.words.index(STOP)
+        frames_per_ep = len(obs.frames) / len(obs.episode_start)
+        sents_per_ep = (self.lang.tokens == stop).sum() / len(self.lang.episode_start)
+        self.q = float(1 - (frames_per_ep - 1) / (sents_per_ep - 1))
+        self._grid_counts(obs)
+        self._grid_starts(obs)
+        self.pairs = None
+        if cfg.summary_features == "pairs":
+            self.pairs = torch.triu_indices(self.U, self.U, 1, device=device)
+        elif cfg.summary_features != "linear":
+            raise ValueError(f"unknown summary_features {cfg.summary_features!r}")
+
+    def _grid_counts(self, obs) -> None:
+        """Raw frequency profiles for the shortlist: how often each thing changes, and how often
+        something arrives at each place."""
+        f0, f1, w = _transitions(obs, ~obs.held_out)
+        u0 = self.view(torch.tensor(f0, dtype=torch.float32, device=self.dev))
+        u1 = self.view(torch.tensor(f1, dtype=torch.float32, device=self.dev))
+        changed = (u0 != u1).float()
+        on = (u1 - u0).clamp(min=0)
+        wt = torch.tensor(w, dtype=torch.float32, device=self.dev)
+        units = self.units.units
+        self.thing_changes = np.zeros(len(self.units.things))
+        self.arrivals = np.zeros(self.units.places)
+        for j, u in enumerate(units):
+            if u[0] == "at":
+                self.arrivals[u[2]] += float((wt * on[:, j]).sum())
+        for k in range(len(self.units.things)):
+            cols = [j for j, u in enumerate(units) if u[0] in ("at", "looks", "gone") and u[1] == k]
+            self.thing_changes[k] = float((wt * (changed[:, cols].sum(1) > 0).float()).sum())
+        self.word_counts = np.bincount(self.lang.tokens, minlength=self.V).astype(float)
+
+    def _grid_starts(self, obs) -> None:
+        """Start frames seen in the frame stream's training episodes, one per distinct unit view."""
+        starts = obs.frames[obs.episode_start[~obs.held_out]]
+        S = torch.tensor(np.unique(starts, axis=0), dtype=torch.float32, device=self.dev)
+        Su = self.view(S)
+        _, first = np.unique(Su.cpu().numpy(), axis=0, return_index=True)
+        first = torch.tensor(np.sort(first), device=self.dev)
+        self.start, self.start_u = S[first], Su[first]
+        self.start_n = self.start_u / self.start_u.sum(1, keepdim=True)
+
+    def count_mismatch(self, m: GridMatching) -> float:
+        def share(x):
+            x = np.asarray(x, float)
+            return np.log(x / x.sum())
+
+        wc = self.word_counts
+        return float(
+            ((share([wc[w] for w in m.things]) - share(self.thing_changes)) ** 2).sum()
+            + ((share([wc[w] for w in m.places]) - share(self.arrivals)) ** 2).sum()
+        )
+
+    def matchings(self) -> list[GridMatching]:
+        """Every matching of words to things and places, for every way the word classes could name
+        them, with the words in every order (so the agents' order is never fixed)."""
+        return [
+            GridMatching(tuple(t), tuple(p))
+            for r in self.roles
+            for t in itertools.permutations(r.things)
+            for p in itertools.permutations(r.places)
+        ]
+
+    def valid(self, c: torch.Tensor) -> torch.Tensor | None:
+        return self.view.valid(c) if self.cfg.valid_only else None
+
+    def actor_word(self, c: torch.Tensor, places_t: torch.Tensor) -> torch.Tensor:
+        return torch.full((c.shape[0],), self.V, device=self.dev, dtype=torch.long)
+
+    def tying(self, m: GridMatching):
+        """For every unit feature: its kind (shared table) and the role class of every word.
+        Roles: 0 a word naming one of the unit's things, 1 another entity word, 2 the word for the
+        unit's place, 3 another place word, then one class per other word."""
+        U, V = self.U, self.V
+        ents, places = set(m.things), set(m.places)
+        other = [w for w in range(V) if w not in ents and w not in places]
+        n_cls = 4 + len(other)
+        F = 3 * U + 1
+        kinds: dict[tuple, int] = {}
+        g = np.zeros(F, np.int64)
+        K = np.zeros((F, V), np.int64)
+        for f in range(F):
+            if f == 3 * U:
+                typ, desc = "none", ("none",)
+            else:
+                typ, desc = ("state", "on", "off")[f // U], self.units.units[f % U]
+            if desc[0] == "at":
+                key, things, place = (typ, "at", desc[1], *desc[3:]), {desc[1]}, desc[2]
+            elif desc[0] == "looks":
+                key, things, place = (typ, "looks", desc[1], desc[2]), {desc[1]}, None
+            elif desc[0] == "with":
+                key, things, place = (typ, "with", desc[1], desc[2]), {desc[1], desc[2]}, None
+            elif desc[0] == "gone":
+                key, things, place = (typ, "gone", desc[1]), {desc[1]}, None
+            else:
+                key, things, place = (typ,), set(), None
+            g[f] = kinds.setdefault(key, len(kinds))
+            mine = {m.things[k] for k in things if m.things[k] >= 0}
+            here = None if place is None else m.places[place]
+            for w in range(V):
+                if w in ents:
+                    K[f, w] = 0 if w in mine else 1
+                elif w in places:
+                    K[f, w] = 2 if w == here else 3
+                else:
+                    K[f, w] = 4 + other.index(w)
+        size = np.stack([np.bincount(K[f], minlength=n_cls) for f in range(F)])
+        dev = self.dev
+        return (
+            torch.tensor(g, device=dev),
+            torch.tensor(K, device=dev),
+            torch.tensor(size, dtype=torch.float32, device=dev),
+            len(kinds),
+            n_cls,
+        )
+
+
+class GridFitMixin:
+    """Decoding for grid video. Particles that show the same state can differ in which cell each
+    thing sits in, so the commonest *unit view* is taken, returned as one particle frame with it."""
+
+    @torch.no_grad()
+    def decode(self, batches: list[Batch], seed: int | None = None):
+        D = self.D
+        bits = 2 ** torch.arange(D.U, device=D.dev, dtype=torch.int64)
+        N = D.cfg.particles
+        frames, positions = [], []
+        seed = 1000 * D.cfg.seed if seed is None else seed
+        for b, traj, _ in self.run(batches, seed)[0]:
+            Tm, Be = b.real.shape
+            flat = traj.reshape(-1, D.d).float()
+            units = D.view(flat).round().clamp(0, 1).long()
+            code = (units * bits).sum(-1).reshape(Be, N, Tm)
+            best = torch.mode(code, 1).values  # Be x Tm
+            pick = (code == best[:, None]).float().argmax(1)  # first particle with that view
+            tr = traj.reshape(Be, N, Tm, D.d)
+            e_idx = torch.arange(Be, device=D.dev)[:, None]
+            t_idx = torch.arange(Tm, device=D.dev)[None]
+            fr = tr[e_idx, pick, t_idx].cpu().numpy()
+            keep = b.real.T.cpu().numpy()
+            for e in range(Be):
+                frames.append(fr[e][keep[e]])
+                positions.append(b.ends[e])
+        return np.concatenate(frames), np.concatenate(positions)
+
+
+class GridSentenceFit(GridFitMixin, SentenceFit):
+    pass
+
+
+class GridWordFit(GridFitMixin, Fit):
+    pass
+
+
+def make_fit(D: Decipherer, m) -> Fit:
+    grid = isinstance(D, GridDecipherer)
     if D.cfg.emission == "sentence":
-        return SentenceFit(D, m)
+        return (GridSentenceFit if grid else SentenceFit)(D, m)
     if D.cfg.emission != "word":
         raise ValueError(f"unknown emission {D.cfg.emission!r}")
-    return Fit(D, m)
+    return (GridWordFit if grid else Fit)(D, m)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -859,6 +1103,16 @@ def make_fit(D: Decipherer, m: Matching) -> Fit:
 # ---------------------------------------------------------------------------------------------
 
 DECIPHER_PART = "decipher"
+
+
+def _free_gpu() -> None:
+    """Release a finished fit's GPU memory. Without this, a grid search slowed about 3.5 times
+    after its first full fit, as the GPU's memory filled (experiment log, entry 65)."""
+    import gc
+
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
 def sample(lang: LangStream, root: int, cfg: DecipherConfig) -> dict[str, np.ndarray]:
@@ -879,13 +1133,24 @@ def decipher_pair(
     out = pair / "align" / name
     out.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
-    D = Decipherer(pair, cfg, dev)
-    lay, ty = D.layout, D.types
-    log(
-        f"structure: {len(lay.agents)} agents, {len(lay.objects)} objects, {lay.places} places, "
-        f"{len(lay.values)} live frame values; words: {len(ty.agents)} agents, {len(ty.objects)} "
-        f"objects, {len(ty.places)} places, {len(ty.verbs)} verbs; stay probability {D.q:.3f}"
-    )
+    grid = load_obs(pair / "data").shape is not None
+    D = (GridDecipherer if grid else Decipherer)(pair, cfg, dev)
+    if grid:
+        u = D.units
+        log(
+            f"structure: {len(u.things)} things, {u.places} places, {u.n} units "
+            f"({D.d} frame values); word kinds by {cfg.word_kinds}: {len(D.roles)} ways to name "
+            f"them; {len(D.start)} start views; stay probability {D.q:.3f}"
+        )
+    else:
+        ty = D.types
+        lay = D.layout
+        log(
+            f"structure: {len(lay.agents)} agents, {len(lay.objects)} objects, {lay.places} "
+            f"places, {len(lay.values)} live frame values; words: {len(ty.agents)} agents, "
+            f"{len(ty.objects)} objects, {len(ty.places)} places, {len(ty.verbs)} verbs; "
+            f"stay probability {D.q:.3f}"
+        )
     root = read_record(pair / "data").seed
     eps = sample(D.lang, root, cfg)
     lm = load_model(pair / "models" / cfg.lang_model, dev)
@@ -897,8 +1162,34 @@ def decipher_pair(
     log(f"language batches and summaries ready ({time.time() - t0:.0f}s)")
 
     ranked = sorted(D.matchings(), key=D.count_mismatch)
-    finalists = ranked[: cfg.shortlist]
-    log("shortlist by raw counts: " + "; ".join(f"{D.count_mismatch(m):.4f}" for m in finalists))
+    screened = []
+    if cfg.screen:
+        pool = ranked[: cfg.screen]
+        n_b = max(1, cfg.screen_episodes // cfg.batch)
+        it = cfg.screen_iterations
+        D.cfg = replace(
+            cfg, iterations=it, summary_from=max(1, it // 2), freeze_mixture=max(1, it - 1)
+        )
+        log(f"screening {len(pool)} matchings: {it} iterations on {n_b} batches each")
+        for j, m in enumerate(pool):
+            f = make_fit(D, m)
+            f.fit(batches["fit"][:n_b], log=lambda _s: None)
+            sc = f.run(batches["select"], seed=11)[1]
+            del f
+            _free_gpu()
+            screened.append(
+                {"matching": asdict(m), "count_mismatch": D.count_mismatch(m), "score": sc}
+            )
+            log(f"  screen {j + 1}/{len(pool)}: {sc:.4f} ({time.time() - t0:.0f}s)")
+        D.cfg = cfg
+        order = np.argsort([-r["score"] for r in screened])
+        finalists = [pool[int(i)] for i in order[: cfg.shortlist]]
+    else:
+        finalists = ranked[: cfg.shortlist]
+    log(
+        "finalists' raw-count mismatch: "
+        + "; ".join(f"{D.count_mismatch(m):.4f}" for m in finalists)
+    )
     rows = []
     for i, m in enumerate(finalists):
         log(f"finalist {i + 1}/{len(finalists)}: fitting")
@@ -917,6 +1208,8 @@ def decipher_pair(
                 "score_seeds": own,
             }
         )
+        del f
+        _free_gpu()
         log(
             f"finalist {i + 1}/{len(finalists)}: selection score {np.mean(own):.4f} "
             f"(seeds {own[0]:.4f}, {own[1]:.4f}) ({time.time() - t0:.0f}s)"
@@ -925,6 +1218,7 @@ def decipher_pair(
     summary = {
         "selected": selected,
         "finalists": rows,
+        "screened": screened,
         "stay_probability": D.q,
         "words": list(D.lang.words),
         "minutes": (time.time() - t0) / 60,

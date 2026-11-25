@@ -28,6 +28,7 @@ class ObsStream:
     frames: np.ndarray  # one row per frame, all episodes concatenated
     episode_start: np.ndarray
     held_out: np.ndarray
+    shape: tuple[int, int, int] | None = None  # rows, columns, channels, for grid video
 
     def episode(self, i: int) -> np.ndarray:
         end = self.episode_start[i + 1] if i + 1 < len(self.episode_start) else len(self.frames)
@@ -44,4 +45,5 @@ def load_lang(data_dir: Path) -> LangStream:
 
 def load_obs(data_dir: Path) -> ObsStream:
     with np.load(Path(data_dir) / "obs.npz") as z:
-        return ObsStream(**{k: z[k] for k in ("frames", "episode_start", "held_out")})
+        shape = tuple(int(x) for x in z["shape"]) if "shape" in z.files else None
+        return ObsStream(**{k: z[k] for k in ("frames", "episode_start", "held_out")}, shape=shape)
