@@ -115,3 +115,17 @@ def test_weights_must_cover_the_reachable_states():
     world, kernels, _ = tiny_setup()
     with pytest.raises(ValueError):
         violation_rate(world, TINY_SWAP, kernels, {})
+
+
+def test_lured_world_keeps_the_agent_swap_and_breaks_the_mirror_harder():
+    from grounding.sim.worlds import lured
+
+    mirror = Relabel((0, 1), (0, 1, 2), (3, 2, 1, 0))
+    lengths = {n: 1 / 41 for n in range(20, 61)}
+    rates = []
+    for w in (pilot(), lured()):
+        k = explore(w)
+        group = automorphisms(w, k)
+        assert len(group) == 2 and group[1].agents == (1, 0)
+        rates.append(violation_rate(w, mirror, k, visit_weights(w, k, lengths)))
+    assert rates[1] > 3 * rates[0]

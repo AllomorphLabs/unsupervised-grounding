@@ -1,0 +1,8 @@
+# The lured pilot world (entry 84): as configs/pilot.yaml, but both agents prefer the river and
+# the cave, so the places' mirror is strongly broken. State-vector observations.
+world: lured
+episodes: 50000  # per stream
+min_len: 20
+max_len: 60
+held_out: 0.1
+recap: 0.1
