@@ -69,6 +69,17 @@ The project runs in five gated phases. Don't start a phase until the previous ph
 
 The compute budget is roughly 2,000–3,000 GPU-hours on a single GPU. Keep tests and examples to tiny configurations that run in seconds, and never launch long training runs without asking.
 
+## Performance and GPU time
+
+A full search takes hours, so time spent making runs faster, and choosing the cheapest run that answers a question, pays for itself many times over. Twenty minutes testing a speed-up can save hours on every run after it.
+
+- **Pick the cheapest test that answers the question.** A model's own measures take minutes, and a fit under the true matching on a tuning pair takes under an hour. Keep full searches for confirming a finished, frozen change on fresh pairs. Stop a running search whose method is already set to change.
+- **Measure before optimising.** Time where a run actually goes, from its logs or a short profile at real sizes, before changing code. Synthetic tests can mislead: a real split step fitted 26 times more unit views than a synthetic one of the same data size (experiment log, entry 91).
+- **Exact speed-ups first.** A change that gives bit-identical results needs only a check, not new experiments. Verify it against the committed code on the same inputs: on the CPU, then on the GPU at a real search's size, with the old code run twice to see what reproduces itself. A change that differs by rounding is a method change: test it like one, or don't make it.
+- **Switch it on.** A verified speed-up behind a setting does nothing until the setting is on. Check the defaults and configs that searches actually use (entry 91 found two exact speed-ups that had never been enabled).
+- **Usual suspects:** many tiny GPU operations (launch overhead; CUDA graphs help), waiting for the GPU inside loops (`.item()`, `float()`, `.tolist()`, `if tensor.any()`), recomputing what doesn't change (histories, fixed matrices), and GPU memory filling and spilling into system memory (decision 25).
+- **Keep the GPU busy, one job at a time.** Queue work through `runs/queue/`, keep a short job queued behind a long one, watch long runs for stalls and memory spill, and run CPU-side checks with the GPU hidden so they can't disturb a run.
+
 ## Technical decisions
 
 Engineering choices (stack, tokenisation, word lists, package layout, how rules are enforced) are recorded in [`docs/technical-decisions.md`](docs/technical-decisions.md), each marked Decided, Proposed or Open. Read it before writing code, and follow Decided entries.

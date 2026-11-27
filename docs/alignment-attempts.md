@@ -20,9 +20,9 @@ taught us.
 
 ## Where we are now
 
-*(Updated as the work moves on. Last updated after experiment 86.)*
+*(Updated as the work moves on. Last updated after experiment 94.)*
 
-**Phase 3, grid video and state vectors with nothing hand-written (entries 56-86).**
+**Phase 3, grid video and state vectors with nothing hand-written (entries 56-94).**
 - Both observation formats find their structure from their own statistics, and the words'
   kinds come from the language alone; the search leaves the agents' order free.
 - **Hunger on grid video is solved under the true matching** (entries 69-76): split moves teach
@@ -50,7 +50,17 @@ taught us.
   1 and 2, at 62.9% and 64.0% exact (mean over three pairs 65.0%).
 - **Grid video on fresh pair 1** (entry 88): the true matching selected, but with hunger read
   poorly (71-73%), so only 13% of frames are exact.
-- **Running:** grid video on fresh pair 2. [TBD]
+- **Grid video's gap is in the alignment, not the watcher** (entries 89-94). The grid world model
+  proposes next moments as well as the state-vector one, and the parsed structure is exact. On
+  pair 1 the fit never links the word "hungry" to the hunger change. More data, other settings,
+  restarts, retrying appearances and hints for verbs each fixed one thing and broke another. The
+  likely cause is that the particle filter, with only 4 candidates per particle, rarely proposes
+  rare events at all.
+- **Speed** (entry 91): the sampler graph and the cached context, both exact, are now on by
+  default. The filter is about twice as fast.
+- **Running:** whether more candidates (16), or weighing every single appearance change exactly
+  (`edit_proposals`), lets pair 1's fit learn hunger without hints (entry 94). Grid pair 2 stays
+  fresh for confirming the result. [TBD]
 
 **The pilot (entries 1-55).** The state of the pilot when it ended:
 
@@ -2202,3 +2212,226 @@ step that sorts frame values and words into kinds, and the search that fixed the
     and 0 (entry 90). [TBD]
 - *Also stopped:* the grid confirmation on pair 2 (entry 88), during screening, before any finalist
   was fitted. Its method is about to change, and the pair stays unused for confirming the new one.
+
+**90. Twice the training data doesn't fix grid pair 1's hunger; its world model and its frame structure are both right, so the fit itself is failing.**
+- *Why:* entry 89 put grid video's gap in the aligner, and grid fits use half the state vectors'
+  training episodes.
+- *How:*
+  - Grid pair 1's true matching was refitted as in the search, with 512 training episodes in
+    place of 256 (`runs/queue/refit_restarts.py`, `runs/queue/grid-split-512.yaml`, seed 0).
+  - The world-model check of entry 89 was run on pair 1 (60 held-out episodes, 16 samples, on
+    the CPU).
+  - The frame structure found from pair 1's stream alone was compared with its hidden key.
+  - The same refit on grid pair 0 ran out of GPU memory in its first iteration and hung. It was
+    dropped.
+- *Result:*
+
+  | Grid pair 1, true matching | 256 episodes (entry 88) | 512 episodes |
+  |---|---|---|
+  | Selection score | 51.42 | 50.56 |
+  | Exact frames | 13.2% | 9.8% |
+  | Places | 95-98% | 97% |
+  | Hunger A / B | 73% / 71% | 76% / 63% |
+  | Glass / stone / apple | 85% / 58% / 53% | 57% / 57% / 61% |
+  | Split-move gain | 0.08 | 1.55 |
+
+  - Pair 1's world model reads hunger at 94-95% given the true history, as pair 0's does.
+  - The frame structure is exactly right on both pairs: each thing's channels and each agent's
+    normal and hungry appearance, as in the key.
+- *Meaning:*
+  - More data isn't the fix. The split moves gained much more likelihood with 512 episodes, but
+    not on hunger.
+  - The watcher and the parse are both sound on pair 1. Something in how the fit links the
+    language summaries to hunger works on pair 0 and not on pair 1.
+  - The state-vector settings in full (summary power 0.2, joint units, 512 episodes) did worse:
+    3.5% exact, places 65-85%, hunger 73-75%, objects 39-81%. That confirms why grid video uses
+    split units and power 0.5.
+  - Hunger stays near 73% on pair 1 in every setting tried, though all used seed 0. Next:
+    restarts of the search's own fit from seeds 1-3, to tell fit-to-fit variation from a
+    systematic failure. [TBD]
+
+**91. Two exact speed-ups that had never been switched on halve the filter's time; the split step is real arithmetic and has no exact speed-up left.**
+- *Why:* searches take 3-4 hours, and Shane asked for speed-ups that change no result.
+- *How:*
+  - The split step's mixture fit was changed to read its total once per round, not once per
+    chunk, and to make its fixed parts once. A copy of the committed code was run beside it, on
+    the CPU and on the GPU (`runs/queue/split_speed_check.py`).
+  - The sampler graph and the cached context (entry 83) turned out never to be switched on in a
+    search. Both were checked at a real search's size: every fit batch of lured grid pair 0, with
+    the true matching's saved tables and summary model, in each combination, bit for bit, with
+    the plain filter run twice (`runs/queue/filter_exact_check.py`).
+  - A real split step's sizes and one of its fits were timed (`runs/queue/split_profile.py`).
+  - A batched form of the split step (all of a fact's restarts at once) was written and
+    dropped: it changes which moves are found.
+- *Result:*
+
+  | Filter pass over all fit batches | Time | Against the plain filter |
+  |---|---|---|
+  | Plain, as every search so far | 51-55 s | reproduces itself |
+  | Sampler graph | 35.9 s | identical |
+  | Cached context | 51.7 s | identical |
+  | **Both** | **27.4 s** | **identical** |
+
+  - The split step's change is identical on the CPU and the GPU, but saves little (22-27 s
+    against 25-27 s on a synthetic case).
+  - A real split step fits 13,503 summaries against 23,183 distinct unit views. Grid video's 33
+    units take about 24,000 combinations, and pruning to 99.9% of frames removes almost none. One
+    mixture fit takes 5.4 s, and a split step makes about 200 of them.
+- *Meaning:*
+  - Both filter speed-ups are now on by default (`sampler_graph`, `context_cache`). Results are
+    unchanged and the filter is about twice as fast. A grid search should take about 3.1 hours,
+    against 4.3, and a state-vector search about 3.5 hours, against 4.
+  - The split step is now most of a search's time. Its cost is arithmetic over the views, so
+    cutting it means changing the method (fewer views, or lower precision). That is left for
+    now.
+
+**92. On grid pair 1 every restart reads hunger at about 73%: the fit gives hunger an effect of the right size pointing half the wrong way, so the split step never retries it.**
+- *Why:* hunger stayed near 73% on pair 1 in every setting tried (entry 90), all from seed 0.
+  This tells fit-to-fit variation from a systematic failure.
+- *How:*
+  - Pair 1's true matching was refitted with the search's own settings from seeds 1 and 2, on the
+    faster code of entry 91. Seed 3 was stopped: two seeds and the check below settled it.
+  - Monitoring only (uses hidden/): the summary model was fitted on the true frame behind each fit
+    sentence. For each thing, the direction of its fitted appearance effect was compared with the
+    true one. An agent always shows exactly one of its two appearances, so only the hungry-minus-
+    normal difference is pinned down, and that is what was compared.
+- *Result:*
+
+  | Grid pair 1, true matching | Seed 0 (search) | Seed 1 | Seed 2 |
+  |---|---|---|---|
+  | Selection score | 51.42 | 51.69 | 51.36 |
+  | Exact frames | 13.2% | 26.3% | 19.6% |
+  | Hunger A / B | 73% / 71% | 73% / 72% | 74% / 72% |
+  | Glass / stone / apple | 85 / 58 / 53% | 85 / 77 / 84% | 85 / 81 / 57% |
+
+  | Pair 1, seed 0 fit | Direction match with the true effect (cosine) | Size fitted / true |
+  |---|---|---|
+  | Glass, broken minus intact | 0.97 | 3.79 / 3.92 |
+  | Agent A, hungry minus normal | 0.48 | 3.19 / 3.03 |
+  | Agent B, hungry minus normal | 0.54 | 3.22 / 3.02 |
+
+  The hunger units' effects rank 16th and 22nd of 33 by size. The split step tries only the 4
+  weakest. (Pair 0's true matching has the agents swapped, so its rows can't be compared this way.)
+- *Meaning:*
+  - Restarts help the objects, and the fit can tell. Seed 1 doubles exact frames, through better
+    object readings, and has the highest fit and selection score. So keeping the best restart by
+    its own score would choose it.
+  - Hunger fails systematically on pair 1, not by chance. Its effect has the right size but points
+    only about halfway in the right direction. It is never "weak", so the split step never retries
+    it.
+  - Next: also retry every thing's appearance units whatever their size (`split_looks`, off by
+    default). This uses the frame structure found from the stream alone, not the truth. Tested
+    on pair 1 from seed 1, and on pair 0 to check it doesn't hurt a fit that works.
+- *Result of retrying every appearance unit* (pair 1, seed 1; 9 facts tried in place of 4; the
+  split step took about 60 minutes):
+  - The split step reached a higher likelihood of the summaries on their own: 114.90, against
+    112.43 without the option.
+  - But the fit then decoded far worse: 2.8% exact, hunger 66% and 54%, agent A's place 70%,
+    objects 37-55%. Its final fit and selection score also fell (49.83 and 49.72, against 51.71
+    and 51.69), so keeping the best restart by its own score would reject it.
+  - The pair 0 check was stopped, because the option evidently hurts.
+- *Meaning of that:* the summaries' own distribution doesn't pin down the hunger effect, and
+  pushing it harder through split moves leads the fit astray. The right direction has to come
+  from the joint fit, where the words that report an agent getting hungry should anchor it.
+  `split_looks` stays off.
+- *What the word tables say* (monitoring only: the key names the words). On pair 0 the fitted
+  tables tie "hungry" to an agent's hungry appearance turning on, for both agents (probability
+  1.00), and "eat" to the apple disappearing and the agent's hunger ending. On pair 1 "hungry" is
+  tied to nothing in particular: "no change" at 0.30, everything else below 0.1. "Eat" is tied
+  to an agent putting something down.
+- *Meaning:* the root cause is on the word side. The tables are learned from the fit's own
+  guessed frames. If early particles rarely propose a hunger change at a "hungry" sentence, the
+  word never gets tied to it, and the summary model's hunger effect is then left half right. Next:
+  a first guess for the word tables from statistics of each stream alone, matching how often
+  each word occurs to how often each change happens (entry 93).
+
+**93. Linking each verb to the change that happens about as often as the verb is used fixes hunger on grid pair 1, but the first attempt made the objects worse.**
+- *Why:* entry 92 found that on pair 1 the word tables never tied "hungry" to the hunger change.
+  That would be no puzzle if the tables started with a sensible guess.
+- *How:*
+  - `rate_prior` (off by default). Every change is reported in the language, so a word that
+    reports a kind of change is said about as often, per frame step, as that change happens
+    (summed over the things it can happen to). Each stream's own rates are compared:
+    `GridDecipherer.rate_matches`. Sentences are converted to frame steps by the episodes'
+    lengths alone (0.767 frame steps per sentence).
+  - Matched word-change pairs get pseudo-counts in the word tables before fitting, like the 20
+    that each unit already gives its own entity words.
+  - Allowing every kind of change matched coincidences: "drop" against hunger, and "eat" and
+    "break" against places and carrying. Restricted to appearance changes and disappearances,
+    with a 10% tolerance, every match was right on all three lured pairs checked, with none
+    wrong. "Hungry" goes to hunger starting, "eat" to hunger ending, "break" to the glass
+    breaking. "Drop" sits within about 9% of "hungry" and is left out only narrowly.
+  - Tested under the true matching (monitoring only), as in the search: pair 1 from seed 1, and
+    pair 0.
+- *Result, first version* (20 pseudo-counts at every word position):
+
+  | | Pair 1, seed 1, without | Pair 1, with | Pair 0, without (search) | Pair 0, with |
+  |---|---|---|---|---|
+  | Hunger | 73% / 72% | **96% / 96%** | read well | read well |
+  | Glass / stone / apple | 85 / 77 / 84% | 87 / 27 / 27% | 70 / 66 / 77% | 49 / 41 / 73% |
+  | Exact frames (agent swap allowed) | 26.3% | 5.2% | 43% | 16.5% |
+
+- *Meaning so far:*
+  - The diagnosis was right. Given the link between "hungry" and the hunger change, pair 1's fit
+    reads hunger at 96% for the first time.
+  - But the objects suffered on both pairs. The pseudo-counts went to every word position, while
+    "hungry" and "eat" are only ever the verb. So the appearance units were told to expect a verb
+    where an object's name is said.
+  - Second version: the pseudo-counts go only to the positions where each word is said, in
+    proportion (`position_share`, from the language alone; about a sixth of the first version's
+    total). Same two tests.
+- *Result, second version:*
+
+  | | Pair 1, seed 1, with | Pair 0, with |
+  |---|---|---|
+  | Hunger | 91% / 97% | read well |
+  | Agent places | **38%** / 98% | read well |
+  | Glass / stone / apple | 77 / 67 / 68% | 68 / 23 / 72% |
+  | Exact frames (agent swap allowed) | 12.6% | 13.9% (43% without) |
+  | Fit / selection score | 51.06 / 50.95 | 53.34 / 53.10 |
+
+- *Meaning:*
+  - On pair 1, hunger stays fixed and the objects mostly recover. But this time one agent's place
+    broke (38%), which no object swap explains.
+  - On pair 0, a fit that worked without the prior is spoiled again: the stone is at 23%, against
+    66%.
+  - Every hint about one or two words has fixed one thing and broken another. The fit has several
+    traps, and a hint only changes which one it falls into. The fit and selection scores fall in
+    every case that went wrong, so a choice by score would avoid these fits, but none of them
+    is good.
+  - **The rate prior is dropped** (`rate_prior` stays 0). A third seed test was cancelled.
+  - A check of ordering statistics (which events follow which, in each stream alone) found the
+    signal too weak to match verbs reliably. After any event the next one is about 50% a move
+    and 25% a wait, in both streams, because the two agents' actions interleave. "Take" is
+    followed by "drop" 12% of the time, against about 5% otherwise. So event-order matching was
+    set aside.
+
+**94. Change of direction: the particle filter may be starved of rare events, so weigh single appearance changes exactly.**
+- *Why:*
+  - Entries 90-93 tried more data, other settings, restarts, retrying appearances in the split
+    step, and hints for verbs. Each fixed one thing and broke another.
+  - They all treated a symptom: the word tables never tying "hungry" to the hunger change (entry
+    92).
+  - The likely cause is upstream, in how the filter proposes moments. At each sentence each
+    particle asks the frame model for only 4 candidate next frames (`candidates: 4`), drawn from
+    what usually happens next. An agent turns hungry on about 3% of steps. So at "A hungry" most
+    particles never see a frame in which A has just turned hungry, and can't follow the sentence.
+    The tables, learned from the filter's paths, then never link the word to the change. The
+    same holds for every rare event: eating, breaking, and the objects that depend on them.
+  - This is a weakness of the approximation, not of what can be learned without pairing. With
+    unlimited candidates the filter would be exact.
+- *How:*
+  - First, the quickest test of the diagnosis: 16 candidates instead of 4 (`runs/queue/grid-split-
+    cand16.yaml`), on pair 1's true matching from seed 1, with no hints.
+  - Then the efficient form: `edit_proposals` (off by default). For each particle, the frames one
+    appearance change or one disappearance away from its current frame are built from the frame
+    structure alone (`GridDecipherer.edits`: a thing's appearance is the channel it is drawn in,
+    and changing it keeps the cell). Each is weighed exactly: the frame model's probability (one
+    parallel pass, `log_prob_next`) times the emission and summary terms. The samples estimate
+    everything else, and a sample equal to an edit is dropped. So the filter's estimates stay
+    unbiased, and a rare single change always gets its due weight.
+  - The frame model still judges every candidate. No pairing, no truth, nothing specific to
+    hunger. On a small batch it runs and gives 4 edits per frame on pair 1. The normal path is
+    unchanged, and the tests pass.
+  - Tested on pair 1 (seed 1), then pair 0, under the true matching (monitoring only).
+- *Result:* [TBD]

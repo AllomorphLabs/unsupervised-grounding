@@ -54,7 +54,9 @@ def _loglik(
     M = g.mean(views)  # K x D
     MA = M @ g.A  # K x D
     m2 = (MA * MA).sum(1)
-    total = 0.0
+    # Each chunk's float32 sum is widened to float64 and added in order, as adding Python floats
+    # did, but on the device, so the total is read once instead of waiting for every chunk.
+    total = torch.zeros((), dtype=torch.float64, device=z.device)
     R_sum = torch.zeros(len(views), device=z.device)  # sum_n r_nk
     RZ = torch.zeros(len(views), z.shape[1], device=z.device)  # sum_n r_nk z_n
     for i in range(0, len(z), chunk):
@@ -63,13 +65,13 @@ def _loglik(
         d2 = (ZA * ZA).sum(1, keepdim=True) - 2 * ZA @ MA.T + m2[None]
         lp = logp[None] - 0.5 * d2 + g.norm
         ll = torch.logsumexp(lp, 1)
-        total += float(ll.sum())
+        total = total + ll.sum().double()
         # Annealing: responsibilities from a flattened likelihood while temp > 1.
         lpt = logp[None] - 0.5 * d2 / temp
         r = torch.exp(lpt - torch.logsumexp(lpt, 1, keepdim=True))
         R_sum += r.sum(0)
         RZ += r.T @ zc
-    return total / len(z), R_sum, RZ
+    return float(total) / len(z), R_sum, RZ
 
 
 def fit_latent(
@@ -97,8 +99,12 @@ def fit_latent(
     best = None
     gen = torch.Generator(device="cpu").manual_seed(seed)
     D = z.shape[1]
+    # Fixed for the whole fit, so made once (each was remade every EM iteration).
+    P = Gauss.features(views, pairs)
+    zz = z.T @ z
+    eye_p = torch.eye(P.shape[1], device=dev)
+    eye_d = torch.eye(D, device=dev)
     for _ in range(restarts):
-        P = Gauss.features(views, pairs)
         if init is None:
             # Start: a random W, the data's mean and covariance.
             Wb = torch.randn(P.shape[1], D, generator=gen).to(dev) * 0.3
@@ -118,15 +124,13 @@ def fit_latent(
             # M-step: weighted ridge regression of z on phi(view), with weights R per view.
             XtX = P.T @ (P * R[:, None])
             XtY = P.T @ RZ
-            eye = torch.eye(XtX.shape[0], device=dev)
-            Wb = torch.linalg.solve(XtX + reg * eye, XtY)
+            Wb = torch.linalg.solve(XtX + reg * eye_p, XtY)
             # Residual covariance: sum_n sum_k r_nk (z_n - m_k)(z_n - m_k)^T / N
             M = P @ Wb
-            zz = z.T @ z
             cross = RZ.T @ M
             mm = M.T @ (M * R[:, None])
             Sig = (zz - cross - cross.T + mm) / len(z)
-            Sig = (Sig + Sig.T) / 2 + 1e-3 * torch.eye(D, device=dev)
+            Sig = (Sig + Sig.T) / 2 + 1e-3 * eye_d
             g = Gauss(Wb, torch.linalg.inv(torch.linalg.cholesky(Sig)).T, pairs)
             if temp <= 1.0 and abs(ll_new - ll) < 1e-5:
                 ll = ll_new
@@ -158,6 +162,7 @@ def split_moves(
     rounds: int = 1,
     together: list[tuple[int, int]] | None = None,
     orders: int = 1,
+    extra: list[int] | None = None,
     log=print,
 ) -> LatentFit:
     """Escape "no effect" for facts whose effect on the summaries is near zero.
@@ -175,7 +180,10 @@ def split_moves(
 
     ``orders``: which facts get placed can depend on the order they are tried in (entry 74), so
     the whole procedure is repeated with the weak facts in that many orders (as found, reversed,
-    then shuffled), keeping the fit of highest likelihood."""
+    then shuffled), keeping the fit of highest likelihood.
+
+    ``extra``: facts tried as well as the weak ones, whatever their effect size. A fact can have an
+    effect of the right size pointing the wrong way, and is then never weak (entry 92)."""
     best = fit_latent(z, views, prior, iterations=iterations, restarts=1, init=start, jitter=0.0)
     log(f"  split moves: start loglik {best.loglik:.4f}")
     norms = best.gauss.Wb[:-1].norm(dim=1)
@@ -186,6 +194,8 @@ def split_moves(
         live = norms[norms > 0]
         cut = weak * float(live.median()) if len(live) else 0.0
         dims = [j for j in range(len(norms)) if float(norms[j]) < cut]
+    if extra:
+        dims = dims + [j for j in extra if j not in dims]
     log(f"  weak facts: {dims}")
     first = best
     gen = torch.Generator().manual_seed(0)
