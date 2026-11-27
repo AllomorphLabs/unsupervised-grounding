@@ -219,6 +219,44 @@ class FrameModel(nn.Module):
         """Last-layer hidden state at every frame: what the model knows so far."""
         return self.backbone(self.embed(frames))
 
+    # -- incremental context: one new frame at a time, earlier frames' keys and values kept ----
+    def context_cache(self, n: int, length: int) -> list[list[torch.Tensor]]:
+        """Room for the keys and values of ``n`` histories of up to ``length`` frames."""
+        bb = self.backbone
+        hd = bb.cfg.width // bb.cfg.heads
+        dev = self.embed.weight.device
+        return [
+            [torch.zeros(n, bb.cfg.heads, length, hd, device=dev) for _ in range(2)]
+            for _ in bb.blocks
+        ]
+
+    @torch.no_grad()
+    def context_at(
+        self, cache, frames: torch.Tensor, pos: torch.Tensor, rows: torch.Tensor
+    ) -> torch.Tensor:
+        """The hidden state after adding frame ``frames[i]`` at position ``pos[i]`` of history
+        ``rows[i]``, whose earlier frames' keys and values are in ``cache``; this frame's are
+        written there too. The model is causal, so this is what ``context`` would give at that
+        position for the whole history, up to the order of floating-point sums."""
+        bb = self.backbone
+        x = self.embed(frames) + bb.pos(pos)  # m x w
+        m, w = x.shape
+        heads = bb.cfg.heads
+        hd = w // heads
+        length = cache[0][0].shape[2]
+        # Each history sees its own frames up to and including this one.
+        see = torch.arange(length, device=x.device)[None] <= pos[:, None]  # m x length
+        mask = see[:, None, None, :]  # m x 1 x 1 x length
+        for (K, V), block in zip(cache, bb.blocks, strict=True):
+            q, k, v = block.qkv(block.norm1(x)).split(w, dim=-1)
+            q, k, v = (z.view(m, heads, hd) for z in (q, k, v))
+            K[rows, :, pos] = k
+            V[rows, :, pos] = v
+            a = F.scaled_dot_product_attention(q[:, :, None], K[rows], V[rows], attn_mask=mask)
+            x = x + block.proj(a[:, :, 0].reshape(m, w))
+            x = x + block.mlp(block.norm2(x))
+        return bb.norm(x)
+
     def forward(self, frames: torch.Tensor) -> torch.Tensor:
         """Independent yes/no logits for the frame after each position."""
         if self.joint is not None:
@@ -239,7 +277,42 @@ class FrameModel(nn.Module):
     def sample_next(
         self, h: torch.Tensor, generator: torch.Generator | None = None
     ) -> torch.Tensor:
-        """One next frame per context ``h`` (shape ``(n, width)``)."""
+        """One next frame per context ``h`` (shape ``(n, width)``).
+
+        With ``use_graph`` set and ``h`` on a GPU, the value-by-value loop is recorded once as a
+        CUDA graph and replayed: the same operations in the same order, launched as one job
+        instead of about 6,000 (entry 82)."""
+        if self.joint is not None and h.is_cuda and getattr(self, "use_graph", False):
+            return self._sample_graph(h, generator)
+        return self._sample_eager(h, generator)
+
+    def _sample_graph(self, h: torch.Tensor, generator: torch.Generator | None):
+        if generator is None:
+            generator = torch.cuda.default_generators[h.device.index or 0]
+        self._sample_plan()  # built outside the recording: building it waits for the GPU
+        key = (h.shape, h.device, id(generator))
+        graphs = self.__dict__.setdefault("_graphs", {})
+        if key not in graphs:
+            graphs.clear()  # one generator at a time: a fit makes a new one for each pass
+            static_h = h.clone()
+            # Warm up on a side stream with a throwaway generator, so the real one's draws are
+            # untouched, as recording requires.
+            spare = torch.Generator(device=h.device).manual_seed(0)
+            side = torch.cuda.Stream(device=h.device)
+            side.wait_stream(torch.cuda.current_stream(h.device))
+            with torch.cuda.stream(side):
+                self._sample_eager(static_h, spare)
+            torch.cuda.current_stream(h.device).wait_stream(side)
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph):
+                static_x = self._sample_eager(static_h, generator)
+            graphs[key] = (graph, static_h, static_x)
+        graph, static_h, static_x = graphs[key]
+        static_h.copy_(h)
+        graph.replay()
+        return static_x.clone()
+
+    def _sample_eager(self, h: torch.Tensor, generator: torch.Generator | None) -> torch.Tensor:
         n = h.shape[0]
         x = torch.zeros(n, self.frame_size, device=h.device)
         if self.joint is None:
@@ -247,30 +320,49 @@ class FrameModel(nn.Module):
             return (torch.rand(p.shape, device=h.device, generator=generator) < p).float()
         j = self.joint
         c1, c2, co = j.c1(h), j.c2(h), j.co(h)  # the context's part, the same for every value
-        # Each hidden unit depends only on the values before its degree, so it is computed once,
-        # at the step where those values are all known, instead of recomputing the whole network
-        # for every value. The result is exactly the same as a full pass per value.
+        plan, wo = self._sample_plan()
+        a1 = torch.zeros(n, j.l1.weight.shape[0], device=h.device)
+        a2 = torch.zeros(n, j.l2.weight.shape[0], device=h.device)
+        for v in range(self.frame_size):
+            g1, w1g, b1g, g2, w2g, b2g = plan[v]
+            if g1 is not None:
+                a1[:, g1] = F.gelu(x @ w1g.T + b1g + c1[:, g1])
+            if g2 is not None:
+                a2[:, g2] = F.gelu(a1 @ w2g.T + b2g + c2[:, g2])
+            logit = a2 @ wo[v] + j.out.bias[v] + co[:, v]
+            x[:, v] = (
+                torch.rand(n, device=h.device, generator=generator) < torch.sigmoid(logit)
+            ).float()
+        return x
+
+    def _sample_plan(self):
+        """Which hidden units ``sample_next`` computes at each value, with their weights sliced
+        out once. Each hidden unit depends only on the values before its degree, so it is computed
+        once, at the step where those values are all known, instead of recomputing the whole
+        network for every value; the result is exactly that of a full pass per value.
+
+        Built once and kept while the weights are unchanged: building it costs a GPU-to-CPU wait
+        per value (about 480 per call on grid video), and the masks never change."""
+        j = self.joint
+        version = tuple(p._version for p in (j.l1.weight, j.l1.bias, j.l2.weight, j.l2.bias))
+        version += (j.out.weight._version, j.l1.weight.device)
+        if getattr(self, "_plan_version", None) == version:
+            return self._plan
         m1 = j.l1.mask.sum(1).long()  # first-layer unit k sees values 0 .. m1[k]-1
         # Second-layer unit k sees first-layer units of degree <= m2[k], all known by step m2[k].
         m2 = torch.where(j.l2.mask > 0, m1[None].float(), -1.0).max(1).values.long()
         w1 = j.l1.weight * j.l1.mask
         w2 = j.l2.weight * j.l2.mask
         wo = j.out.weight * j.out.mask
-        a1 = torch.zeros(n, w1.shape[0], device=h.device)
-        a2 = torch.zeros(n, w2.shape[0], device=h.device)
-        groups1 = [torch.nonzero(m1 == v).flatten() for v in range(self.frame_size)]
-        groups2 = [torch.nonzero(m2 == v).flatten() for v in range(self.frame_size)]
+        plan = []
         for v in range(self.frame_size):
-            g1, g2 = groups1[v], groups2[v]
-            if len(g1):
-                a1[:, g1] = F.gelu(x @ w1[g1].T + j.l1.bias[g1] + c1[:, g1])
-            if len(g2):
-                a2[:, g2] = F.gelu(a1 @ w2[g2].T + j.l2.bias[g2] + c2[:, g2])
-            logit = a2 @ wo[v] + j.out.bias[v] + co[:, v]
-            x[:, v] = (
-                torch.rand(n, device=h.device, generator=generator) < torch.sigmoid(logit)
-            ).float()
-        return x
+            g1 = torch.nonzero(m1 == v).flatten()
+            g2 = torch.nonzero(m2 == v).flatten()
+            p1 = (g1, w1[g1], j.l1.bias[g1]) if len(g1) else (None, None, None)
+            p2 = (g2, w2[g2], j.l2.bias[g2]) if len(g2) else (None, None, None)
+            plan.append(p1 + p2)
+        self._plan, self._plan_version = (plan, wo), version
+        return self._plan
 
     def hidden(self, frames: torch.Tensor) -> torch.Tensor:
         return self.backbone(self.embed(frames), all_layers=True)

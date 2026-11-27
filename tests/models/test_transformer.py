@@ -118,3 +118,34 @@ def test_joint_frame_model_is_causal_and_samples_frames():
     assert model.loss(frames, mask).item() > 0
     s = model.sample_next(model.context(frames)[:, -1])
     assert s.shape == (2, 9) and set(s.unique().tolist()) <= {0.0, 1.0}
+
+
+def test_incremental_context_matches_the_full_recompute():
+    """One frame at a time, earlier keys and values kept: the same states as re-running the whole
+    history, up to the order of floating-point sums (experiment log, entry 79)."""
+    torch.manual_seed(0)
+    model = FrameModel(9, TINY).eval()
+    hist = (torch.rand(5, 12, 9) < 0.3).float()
+    full = model.context(hist)
+    cache = model.context_cache(5, TINY.context)
+    rows = torch.arange(5)
+    for t in range(12):
+        h = model.context_at(cache, hist[:, t], torch.full((5,), t), rows)
+        assert torch.allclose(h, full[:, t], atol=1e-5)
+    # Histories at different lengths, and only some of them advanced.
+    sub = torch.tensor([0, 3])
+    pos = torch.tensor([4, 9])
+    h = model.context_at(cache, hist[sub, pos], pos, sub)
+    assert torch.allclose(h, full[sub, pos], atol=1e-5)
+
+
+def test_sampler_plan_is_rebuilt_when_the_weights_change():
+    joint = ModelConfig(layers=1, width=8, heads=2, context=8, joint=True, joint_hidden=16)
+    model = FrameModel(4, joint).eval()
+    h = torch.randn(6, 8)
+    a = model.sample_next(h, torch.Generator().manual_seed(1))
+    with torch.no_grad():
+        model.joint.out.bias.add_(-100.0)  # every value now (almost) surely off
+        model.joint.l1.weight.mul_(1.0)
+    b = model.sample_next(h, torch.Generator().manual_seed(1))
+    assert a.sum() > 0 and b.sum() == 0
