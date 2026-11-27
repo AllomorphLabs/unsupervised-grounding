@@ -70,3 +70,71 @@ def test_language_stream_is_unchanged_by_the_observation_format(pair, tmp_path):
     other = generate_pair(state_cfg, 0, tmp_path / "data")
     a, b = load_lang(pair), load_lang(other)
     assert np.array_equal(a.tokens, b.tokens) and a.words == b.words
+
+
+def _patch_contents(world, frame, key):
+    """Each patch's cells as a sorted list of channel sets: the frame with where in its patch each
+    thing sits left out (that is drawn at random)."""
+    from grounding.render.grid.frames import place_cells
+
+    v = frame.reshape(-1, key.channels)
+    out = []
+    for p in range(len(world.places)):
+        cells = [tuple(np.flatnonzero(v[c])) for c in place_cells(world, p, key)]
+        out.append(sorted(c for c in cells if c))
+    return out
+
+
+@pytest.mark.parametrize("name", ["pilot", "lured"])
+def test_renderer_check_the_agent_swap_survives_grid_video(name):
+    # Proposal, "Renderer checks": relabelling a trace and then rendering it must match rendering
+    # it with the relabelled key, and the relabelled key must be just as likely. Then the grid
+    # renderer can't tell the interchangeable agents apart.
+    from grounding.render.grid.frames import EpisodeRenderer
+    from grounding.sim.symmetry import Relabel, automorphisms
+    from grounding.sim.world import sample_initial, step
+    from grounding.sim.worlds import make_world
+
+    world = make_world(name)
+    swap = Relabel((1, 0), tuple(range(len(world.objects))), tuple(range(len(world.places))))
+    assert swap in automorphisms(world)
+    rng = np.random.default_rng(3)
+    for trial in range(20):
+        key = GridKey.random(world, rng)
+        swapped = GridKey(key.slot, (key.agent[1], key.agent[0]), key.obj, key.actor)
+        states = [sample_initial(world, rng)]
+        for _ in range(30):
+            states.append(step(world, states[-1], rng)[1])
+        a = EpisodeRenderer(world, key, np.random.default_rng(trial))
+        b = EpisodeRenderer(world, swapped, np.random.default_rng(trial))
+        fa = [a.start(states[0])] + [a.step(s) for s in states[1:]]
+        fb = [b.start(swap.state(states[0]))] + [b.step(swap.state(s)) for s in states[1:]]
+        for x, y in zip(fa, fb, strict=True):
+            assert _patch_contents(world, x, key) == _patch_contents(world, y, swapped)
+    # No fixed screen positions: within its patch, each agent lands on each cell equally often.
+    from grounding.render.grid.frames import place_cells
+
+    # Many short independent episodes, one reading each (readings within an episode are
+    # correlated: an agent stays put for several steps).
+    where = [[], []]
+    for _ in range(4000):
+        key = GridKey.random(world, rng)
+        r = EpisodeRenderer(world, key, rng)
+        s = sample_initial(world, rng)
+        r.start(s)
+        for _ in range(8):
+            s = step(world, s, rng)[1]
+            r.step(s)
+        for ag in (0, 1):
+            where[ag].append(place_cells(world, s.pos[ag], key).index(r.agent_cell[ag]))
+    n = max(max(w) for w in where) + 1
+    h0, h1 = (np.bincount(w, minlength=n) for w in where)
+    assert np.all(np.abs(h0 - h1) < 5 * np.sqrt(h0 + h1 + 1))
+    # The swapped key is as likely as the key: each agent is equally likely to get each channel
+    # pair, so drawing keys at random never ties a channel to one agent.
+    keys = [GridKey.random(world, np.random.default_rng(s)) for s in range(6000)]
+    n_ch = keys[0].channels
+    for part in (0, 1):  # normal, hungry
+        a0 = np.bincount([k.agent[0][part] for k in keys], minlength=n_ch)
+        a1 = np.bincount([k.agent[1][part] for k in keys], minlength=n_ch)
+        assert np.all(np.abs(a0 - a1) < 5 * np.sqrt(a0 + a1 + 1))
