@@ -20,9 +20,9 @@ taught us.
 
 ## Where we are now
 
-*(Updated as the work moves on. Last updated after experiment 94.)*
+*(Updated as the work moves on. Last updated after experiment 98.)*
 
-**Phase 3, grid video and state vectors with nothing hand-written (entries 56-94).**
+**Phase 3, grid video and state vectors with nothing hand-written (entries 56-98).**
 - Both observation formats find their structure from their own statistics, and the words'
   kinds come from the language alone; the search leaves the agents' order free.
 - **Hunger on grid video is solved under the true matching** (entries 69-76): split moves teach
@@ -53,14 +53,20 @@ taught us.
 - **Grid video's gap is in the alignment, not the watcher** (entries 89-94). The grid world model
   proposes next moments as well as the state-vector one, and the parsed structure is exact. On
   pair 1 the fit never links the word "hungry" to the hunger change. More data, other settings,
-  restarts, retrying appearances and hints for verbs each fixed one thing and broke another. The
-  likely cause is that the particle filter, with only 4 candidates per particle, rarely proposes
-  rare events at all.
+  restarts, retrying appearances and hints for verbs each fixed one thing and broke another.
+- **The objective is sound; a blank-start fit is trapped** (entries 95-98). Started from the
+  truth, the fit reaches the method's best score and decodes 54% exact on pair 1 (entry 96).
+  From a blank start, every change tried so far settles on a worse picture: more candidates and
+  edit proposals (94), the narration mismatch (96), how the summary model first forms (97), and
+  four times the particles (98). More particles gave the best blank-start fit yet by iteration
+  12, but it decoded only 8%: the trap isn't a shortage of distinct guesses.
 - **Speed** (entry 91): the sampler graph and the cached context, both exact, are now on by
   default. The filter is about twice as fast.
-- **Running:** whether more candidates (16), or weighing every single appearance change exactly
-  (`edit_proposals`), lets pair 1's fit learn hunger without hints (entry 94). Grid pair 2 stays
+- **Next:** a starting point for the fit from exact inference over the frame stream's unit
+  views, with transitions counted from the frames, instead of a blank start. Grid pairs 2-4 stay
   fresh for confirming the result. [TBD]
+- **Checkpoints:** fits can now save what they have learned after every iteration and resume
+  from any of them with changed settings (entry 98), so a test no longer has to start again.
 
 **The pilot (entries 1-55).** The state of the pilot when it ended:
 
@@ -2434,4 +2440,191 @@ step that sorts frame values and words into kinds, and the search that fixed the
     hunger. On a small batch it runs and gives 4 edits per frame on pair 1. The normal path is
     unchanged, and the tests pass.
   - Tested on pair 1 (seed 1), then pair 0, under the true matching (monitoring only).
-- *Result:* [TBD]
+- *Result, 16 candidates* (pair 1, seed 1, no hints; each iteration about 3.4 times slower):
+
+  | | 4 candidates | 16 candidates |
+  |---|---|---|
+  | Fit at iteration 12 / final | 51.8 / 51.71 | 52.37 / 51.30 |
+  | Split-step likelihood | 112.43 | 115.17 |
+  | Hunger A / B | 73% / 72% | 65% / 71% |
+  | Place, agent A | 93% | 55% |
+  | Glass / stone / apple | 85 / 77 / 84% | 79 / 44 / 28% |
+  | Exact frames | 26.3% | 2.5% |
+
+- *Meaning:*
+  - **The starvation idea is refuted.** With 16 candidates about 43% of particles see a hunger
+    change at a "hungry" sentence (about 13% with 4), yet hunger was learned no better and the
+    rest got worse. The edit-proposal test on pair 0 was cancelled. The one on pair 1 ran on.
+  - As with retrying appearances (entry 92), **the fit reached a higher likelihood and decoded
+    worse.** On pair 1 the method's own objective seems to prefer wrong frames. Then better
+    search or inference can't help: the better the optimisation, the further from the truth.
+  - Next: is the truth the best answer by the method's own score? Fit the tables and the summary
+    model to the true frames and score that model as the search does (entry 95). [TBD]
+- *Result, edit proposals* (pair 1, seed 1, no hints): fit 52.37 and selection 52.17, the highest
+  of any pair 1 fit. Agent B's hunger 97% (agent A's 73%), places 95% and 98%, glass, stone and
+  apple 83%, 80% and 58%, 25.3% exact. So one agent's hunger was learned and nothing else broke.
+  Unlike with 16 candidates, the higher fit went with better decoding. Not yet tested on pair 0.
+
+**95. Word tables fitted to the true grid frames decode as well as state vectors, but the method's own score rates its wrong fits higher: the word model doesn't fit how the language tells one world step in several sentences.**
+- *Why:* entries 92-94 kept finding fits with a higher score and worse decoding. Is the truth the
+  best answer by the method's own score?
+- *How* (all monitoring only, using hidden/; `runs/queue/oracle_objective.py`,
+  `score_parts.py`, `words_by_verb.py`):
+  - Under the true matching, the word tables and summary model were fitted to the TRUE frame
+    behind every fit sentence, rendered consistently through each episode. That "true-frame
+    model" was scored exactly as the search scores fits, and decoded.
+  - Its score was split into words and summaries, as were the search's fits.
+  - Then its word score on the true frames was broken down by each sentence's verb.
+- *Result:*
+
+  | | Selection score | Words only | Summaries' share | Exact frames |
+  |---|---|---|---|---|
+  | Pair 1, true-frame model | 51.56 | **-4.44** | 56.00 | **67.3%** |
+  | Pair 1, search fit of the true matching | 51.39 | -3.87 | 55.26 | 13.2% |
+  | Pair 1, edit-proposal fit (entry 94) | 52.17 | | | 25.3% |
+  | Pair 0, true-frame model | 52.26 | **-4.53** | 56.79 | **65.3%** |
+  | Pair 0, search fit of the true matching | 53.12 | -3.92 | 57.04 | 43% |
+  | Pair 0, search's selected (wrong) reading | 53.56 | | | 7% |
+
+  | Pair 1 sentences, verb | Count | Word score on the true frames | Share where the true frame changes |
+  |---|---|---|---|
+  | drop | 636 | -4.91 | 92% |
+  | hungry | 724 | -3.31 | **0%** |
+  | be (recaps) | 1,024 | -3.26 | 0% |
+  | break | 156 | -2.71 | **0%** |
+  | take | 915 | -2.66 | 88% |
+  | eat | 339 | -2.46 | 94% |
+  | wait | 2,826 | -2.36 | 6% |
+  | go | 6,450 | -1.20 | 91% |
+
+- *Meaning:*
+  - **Grid video can decode at state-vector level.** With the right tables, the same filter decodes
+    65-67% of grid frames exactly on both pairs. The watcher, the parse and the filter are not
+    the limit.
+  - **The method's own score prefers fits other than the truth**, mostly through the words. The
+    true frames explain the words about 0.6 per sentence worse than frames the fit chose itself.
+  - **Why:** an agent turns hungry in the same world step as its action, and a dropped glass
+    breaks in the same step as the drop. The language tells that one step as several sentences
+    ("A goes to the river. A is hungry."). The ground truth gives every sentence of a step the
+    state at the step's end, so the hunger change shows at the "goes" sentence and the "hungry"
+    sentence sees no change. The word model assumes each sentence reports the change since the
+    last sentence. So the true timing is awkward for it. A fit does better by splitting the step,
+    moving at "goes" and turning hungry at "hungry", and on the true timing a word table never
+    sees a change at a "hungry" sentence to tie the word to.
+  - This affects both formats, but grid video depends more on the word side to learn hunger.
+  - The fix: `recent_change` (off by default). A sentence may report any change of the most
+    recent move, not only a change since the previous sentence. Both the filter and the table
+    update pair each sentence with the frame before its particle's most recent move. This is
+    general, how narration works, and uses no truth or pairing.
+  - Next: the true-frame model and a normal fit from seed 1 with the option, on pair 1. [TBD]
+
+**96. Started from the true-frame model, the method's own fit ends with its best score on grid pair 1 and decodes 54% of frames exactly: the objective is broadly sound, and the failures are in the search.**
+- *Why:* in entry 95 the true-frame model scored below the method's fits. That could mean the
+  objective prefers wrong frames, or that the true-frame model was simply under-fitted (one
+  short pass, against the fits' 16 iterations and split moves).
+- *How:* the search's usual fit on pair 1's true matching, started from the true-frame model
+  (`runs/queue/from_oracle.py`; monitoring only). Selection score and accuracy at the start and
+  the end.
+- *Result:*
+
+  | Grid pair 1, true matching | Selection score | Exact frames | Hunger A / B | Glass / stone / apple |
+  |---|---|---|---|---|
+  | True-frame model (start) | 51.47 | 67.3% | 93% / 93% | 91 / 95 / 93% |
+  | **After the usual fit, from it** | **52.51** | **53.6%** | **96.5% / 96.5%** | 85 / 85 / 86% |
+  | Best fit from a blank start (edit proposals, entry 94) | 52.17 | 25.3% | 73% / 97% | 83 / 80 / 58% |
+  | Normal fit from a blank start (seed 1, entry 92) | 51.69 | 26.3% | 73% / 72% | 85 / 77 / 84% |
+
+  The fit's value rose from 51.74 to 52.91 over its 16 iterations, above every blank-start fit
+  (best 52.37). The split step found nothing to add.
+- *Meaning:*
+  - **The objective is broadly sound.** The best-scoring answer the method has found on pair 1 is
+    the one that decodes well, with hunger at 96.5% for both agents. The true-frame model scored
+    lower in entry 95 mainly because it was under-fitted. Accuracy does drift (67% to 54%) as the
+    fit refines it, so the objective is not perfect.
+  - **So the failures are in the search.** From a blank start the fit is trapped in worse regions,
+    and any fit that reaches this one wins on score. Restarts kept by their own score can then only
+    help. If the true reading's best fit also beats every wrong reading's, the choice between
+    readings is sound too; the next full search will show that.
+  - The most likely cause of the trap is the narration mismatch of entry 95, which pushes the word
+    tables away from the true timing early on. Next: `recent_change` from a blank start, on pair 1
+    (seed 1).
+- *Result, `recent_change`:*
+  - It does fix the narration mismatch. With it, the true-frame model scores 51.84 (51.56
+    without) and decodes 70.2% of frames exactly (67.3% without), with hunger at 95%.
+  - But from a blank start (pair 1, seed 1) the fit fell into another trap. Its selection score
+    was 50.08, it decoded 4.9% exact, and agent A's place was 44%.
+  - The scores still rank the fits sensibly. This fit has the lowest, and the fit started from
+    the truth the highest, so a choice by score keeps picking the better fit.
+  - A restart of grid pair 3's language-model training failed on a mistyped command; it was
+    fixed and requeued.
+
+**97. Two ways to stop the summary model locking in the fit's early guesses.**
+- *Why:* started from the truth, the fit reaches the method's best score and decodes well (entry
+  96). From a blank start it is trapped early, in every setting tried. The summary model carries
+  most of the score (about +56, against about -4 for the words). From a blank start it is learned
+  from the filter's first, poor guesses, and then steers the fit. Both options change how it first
+  takes shape. Neither uses pairing or the truth.
+- *How:*
+  - `summary_ramp` (off by default): the summaries' weight rises from 0.05 to its usual 0.5
+    over the first 12 iterations, so the words shape the frames first.
+  - `summary_first` (off by default): before the first filter pass, the summary model is fitted
+    to the summaries' own distribution (a mixture over the frame stream's unit views, 4
+    restarts), then given split moves. The filter starts with it instead of none.
+  - Each was tested once on pair 1 from a blank start (seed 1). A test is stopped early if its
+    fit at iteration 12, where the weight is at full strength in both, is below 52.5. Started
+    from the truth, the fit was at 52.95 at that point; fits that decoded badly were at
+    51.8-52.4.
+- *Result:* both were stopped at iteration 12.
+  - `summary_ramp`: fit 51.66.
+  - `summary_first`: fit 48.91. Its starting summary model, from the summaries alone, reached a
+    likelihood of 114.95 with split moves, the highest of any pair 1 fit, and gave weight to
+    agent B's hunger appearance. But once the filter ran, the fit fell below every blank start.
+- *Meaning:*
+  - Changing how the summary model first takes shape doesn't get a blank-start fit out of the
+    trap.
+  - Ruled out so far as the trap's cause: training data and the state-vector settings (entry
+    90); restarts and retrying appearances (92); hints for verbs (93); missed rare events, with
+    16 candidates and edit proposals (94); the narration mismatch (96); and how the summary model
+    first forms (this entry). Started from the truth, the fit is best by its own score (96), so
+    the trap lies in how a blank-start fit settles its early picture.
+  - Still to test: whether the trap comes from the particle filter itself, through too few
+    histories kept per episode (32), with early wrong ones taking over, or more radically, from
+    exact inference over the frame stream's unit views as a starting point.
+  - Grid pairs 3 and 4's language-model reruns refused to overwrite folders left by interrupted
+    runs. The folders were cleared and the training requeued.
+
+**98. Four times the particles: a better fit early, a worse one in the end.**
+- *Why:* in grid video one world state can be drawn many ways (each thing's cell within its
+  patch), so the filter's 32 histories per episode may hold only a few distinct states, and an
+  early wrong one may take over. If so, more particles should let a blank-start fit escape the
+  trap of entries 94-97.
+- *How:* pair 1, the true matching, a blank start (seed 1), as in entry 97, with 128 particles
+  instead of 32. Stopped early if the fit at iteration 12 were below 52.5. The first run used 64
+  episodes per filter batch, spilled out of the GPU's memory and slowed about tenfold, so it was
+  stopped at iteration 7 and rerun with 32 episodes per batch. That changes only how the work is
+  grouped, not the method.
+- *Result:*
+
+  | Pair 1, true matching | Iteration 12 | Iteration 16 | Exact | A hungry | Glass | Stone | Apple |
+  |---|---|---|---|---|---|---|---|
+  | 128 particles | **52.55** | 51.46 | **8.0%** | 73% | 46% | 64% | 42% |
+  | 32, edit proposals (entry 96) | 52.07 | 52.37 | 25.3% | 73% | 83% | 80% | 58% |
+  | 32, recent change (entry 96) | 52.26 | 50.37 | 4.9% | 73% | 71% | 31% | 80% |
+  | Started from the truth (entry 96) | 52.95 | 52.91 | 53.6% | | | | |
+
+  - Ahead of every blank start at each iteration up to 12, and the first to pass the early-stop
+    bar. Then the split moves helped it least (summary likelihood 111.56 to 112.44, against
+    113.06 to 114.92 and 111.95 to 112.04), and it finished below the others.
+  - Agent A's hunger is at 73% in all three blank starts; agent B's is at 93-97%.
+- *Meaning:*
+  - More distinct guesses improve the fit before the split moves, but not the end result: the
+    trap isn't a shortage of particles. Resampling by world state, the planned follow-up, is
+    dropped.
+  - A higher fit at iteration 12 doesn't mean a better picture. The early-stop bar of 52.5 is
+    necessary but not enough.
+  - What is left of the plan is the more radical change: start the fit from exact inference over
+    the frame stream's unit views, rather than from a blank start.
+  - *Checkpoints:* refits now save what the fit has learned (tables, summary model, mixture
+    weights) after every iteration, and just before the split moves, and can resume from any of
+    them with changed settings. Resuming reproduced a continuous fit exactly in a small CPU
+    check. The particles are redrawn every iteration, so nothing else is needed.
