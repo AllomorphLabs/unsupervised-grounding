@@ -46,9 +46,9 @@ taught us.
   hand-written and no hints, the search selects the true reading: 68% of frames exactly right.
   Every wrong reading of the places loses, and by more the more strongly the world breaks it
   (gaps of 0.6, 1.1 and 1.4 at violation rates 0.25, 0.45 and 0.51).
-- **Confirmed on fresh pair 1** (entry 87): selected the truth, 62.9% exact.
-- **Running:** confirmation with the method frozen (entry 86), once each, on the fresh
-  `pilot-lured` pairs 1 and 2 (state vectors), then grid pair 1. [TBD]
+- **Confirmed on both fresh pairs** (entry 87): the frozen method selects the truth on lured pairs
+  1 and 2, at 62.9% and 64.0% exact (mean over three pairs 65.0%).
+- **Running:** grid video on the fresh lured pairs 1 and 2, run once each. [TBD]
 
 **The pilot (entries 1-55).** The state of the pilot when it ended:
 
@@ -2123,6 +2123,23 @@ step that sorts frame values and words into kinds, and the search that fixed the
   - Finalist scores (selection, and exact frames scored afterwards): truth 19.34 (62.9%); its
     agent-swapped twin 19.27 (51.0%); then 18.72 and 18.62 (0%); 18.04, 18.01, 17.78 and
     17.64 (0.6-3.2%). The truth's twin is the only reading within 0.6.
-- *Result, pair 2:* [TBD]
-- *Meaning so far:* the method generalises to a fresh pair, run once, with nothing hand-written
-  and no truth used. Pair 0 gave 68.1% and pair 1 gives 62.9%.
+- *Frozen code:* the patch of entry 86 was later committed unchanged as `feat/perf` commit
+  81c97db (its diff hashes to the same 128f9ba35a05b21c), so these runs are reproducible from
+  that commit.
+- *Result, pair 2* (search 4 hours, 8 finalists):
+  - **Selected: the true reading. 64.0% of held-out frames exactly right**, against 0.03% for the
+    same frames shuffled. Its agent order matches the key: 63.8% as numbered.
+  - Places 97-98%, hunger 97%, glass, stone and apple 88-93%.
+  - Finalist scores: truth 19.52 (64.0%); its agent-swapped twin 19.45 (62.7%); then 19.23 and
+    19.17 (0%), and 18.42, 18.17, 18.14 and 17.98 (0.9-6.2%). The nearest wrong readings trail
+    by 0.29-0.35, a narrower margin than on pairs 0 and 1 (0.6).
+- *Meaning:*
+  - **Confirmed on both fresh pairs**, each run once with the method frozen, nothing
+    hand-written and no truth used: 62.9% and 64.0% of frames exactly right. Pair 0, a tuning
+    pair, gave 68.1%. The mean over the three pairs is 65.0%; the hand-written pilot method
+    averaged 59.6% on its three pairs (entry 55), and the co-occurrence control 0.8%.
+  - Each time, the top two finalists were the truth and its agent-swapped twin. They score
+    within 0.07-0.32 of each other, as an exact symmetry should.
+  - The nearest wrong readings are 0.29-0.6 behind. Not named here, since naming them uses the
+    key; they decode no frames exactly, like the mirror in entry 86.
+  - Next: grid video on the fresh pairs 1 and 2 (entry 88).
