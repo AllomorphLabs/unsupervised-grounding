@@ -66,8 +66,15 @@ class DecipherConfig:
     sentence_tokens: int = 6  # word positions per sentence
     particles: int = 32
     candidates: int = 4  # next frames sampled per particle per sentence
+    # Also weigh, exactly, every frame one appearance change or one disappearance away from each
+    # particle's frame, scored by the frame model: rare single changes such as an agent turning
+    # hungry are then never missed for want of a sample (entry 94). Grid structure only.
+    edit_proposals: bool = False
     iterations: int = 12
     own_prior: float = 20.0  # pseudo-counts on each value's own entity words, to start
+    # Pseudo-counts tying each other word to the changes that happen about as often as it is said,
+    # from each stream's own rates (0: off; entry 93). Grid structure only.
+    rate_prior: float = 0.0
     smooth: float = 0.01
     summary_power: float = 0.2
     summary_features: str = "linear"  # "linear": the frame; "pairs": also products of live values
@@ -79,10 +86,15 @@ class DecipherConfig:
     # Split moves on the summary model after this iteration (0: off; units only, entry 69).
     split_at: int = 0
     # Keep the frame model's keys and values for each particle's history, so a step puts only the
-    # new frame through the model instead of the whole history. The same model up to the order of
-    # floating-point sums (entry 79); off reproduces earlier runs exactly.
-    context_cache: bool = False
+    # new frame through the model instead of the whole history. Checked bit-identical to the full
+    # recompute on the GPU at a real search's size, with and without the sampler graph (entry 91).
+    context_cache: bool = True
+    # Replay the frame model's sampler as a CUDA graph on the GPU: the same operations in the same
+    # order, launched at once, so the same numbers (entry 83); no effect on the CPU.
+    sampler_graph: bool = True
     split_weakest: int = 0  # facts of smallest effect to try (0: those below a quarter of median)
+    # Also try every appearance unit of every thing, whatever its effect size (entry 92).
+    split_looks: bool = False
     split_rounds: int = 1
     split_orders: int = 1  # orders of the weak facts to try, keeping the likeliest (entry 74)
     # Also restart one thing's appearances together while both stay weak (entry 72).
@@ -318,6 +330,7 @@ class Decipherer:
             self.ctx = self.fm.ctx
         else:
             self.fm = load_model(self.pair / "models" / cfg.frame_model, device)
+            self.fm.use_graph = cfg.sampler_graph
             if self.fm.joint is None:
                 raise ValueError("decipherment needs a joint-head frame model (decision 18)")
             for p in self.fm.parameters():
@@ -505,6 +518,13 @@ class Fit:
         U = D.U
         noise = 1 + 0.1 * torch.rand(J, 3 * U + 1, V, device=dev, generator=gen)
         cnt = (1 + D.cfg.own_prior * own)[None] * noise
+        if D.cfg.rate_prior and hasattr(D, "rate_matches"):
+            # Words that are neither entity nor place words (role 4 on), tied by rate to changes,
+            # in the sentence positions where each word is said, in proportion (entry 93).
+            other = [w for w in range(V) if int(self.tying_[1][0, w]) >= 4]
+            share = torch.tensor(D.position_share(), dtype=torch.float32, device=dev)  # J x V
+            for f, w in D.rate_matches(other):
+                cnt[:, f, w] += D.cfg.rate_prior * share[:, w]
         lam = torch.tensor([0.45, 0.25, 0.2, 0.1], device=dev)[None].repeat(J, 1)
         self.t = Tables(unigram[None].repeat(J, 1), None, None, lam, cnt[:, :U], cnt[:, U:])
         self.project()
@@ -604,6 +624,7 @@ class Fit:
         no_actor = torch.full((R,), D.V, device=dev)
         all_moved = torch.ones(R * M, dtype=torch.bool, device=dev)
         ep_m = ep.repeat_interleave(M, 0)  # the episode of each candidate
+        edits_on = cfg.edit_proposals and hasattr(D, "edits")
         focus = (self.sig / self.sig.sum()).tolist() if hasattr(self, "sig") else None
         for t in range(1, Tm):
             rt = real[t][ep]
@@ -643,6 +664,31 @@ class Fit:
                 rows=ep_m,
                 focus=focus,
             ).reshape(R, M)
+            ne = 0
+            if edits_on:
+                # Stratified: the edited frames are weighed exactly (frame model probability times
+                # emission), and the samples estimate the rest, so a sample equal to an edit is
+                # dropped. Unbiased, and rare single changes always get their due weight.
+                E, okE = D.edits(cur)  # R x ne x d, R x ne
+                ne = E.shape[1]
+                Ef = E.reshape(R * ne, d)
+                lpE = D.fm.log_prob_next(h.repeat_interleave(ne, 0), Ef).reshape(R, ne)
+                vE = D.valid(Ef)
+                if vE is not None:
+                    okE = okE & vE.reshape(R, ne)
+                u_E = D.view(Ef)
+                e_E = self.emit_words(
+                    tok[t],
+                    cur.repeat_interleave(ne, 0),
+                    Ef,
+                    torch.ones(R * ne, dtype=torch.bool, device=dev),
+                    D.actor_word(Ef, self.places_t),
+                    views=(u_cur.repeat_interleave(ne, 0), u_E),
+                    rows=ep.repeat_interleave(ne, 0),
+                    focus=focus,
+                ).reshape(R, ne)
+                dup = (cand.reshape(R, M, 1, d) == E[:, None]).all(-1) & okE[:, None]
+                e_mv = e_mv * (~dup.any(-1)).float()
             E0z = E0 if any_un else None
             if G is not None:
                 zt = b.z[t][ep]
@@ -651,6 +697,9 @@ class Fit:
                 mx = torch.maximum(
                     ls_.reshape(Be, N).max(1).values, lm_.reshape(Be, -1).max(1).values
                 )
+                if ne:
+                    lE = kappa * G.logp(u_E, zt.repeat_interleave(ne, 0)).reshape(R, ne)
+                    mx = torch.maximum(mx, lE.reshape(Be, -1).max(1).values)
                 if any_un:
                     r0 = (b.z[t][:, None, :] - MS[None]) @ G.A
                     lp0 = kappa * (-0.5 * (r0 * r0).sum(-1) + G.norm)
@@ -658,12 +707,17 @@ class Fit:
                     E0z = E0 * torch.exp(lp0 - mx[:, None])
                 e_stay = e_stay * torch.exp(ls_ - mx[ep])
                 e_mv = e_mv * torch.exp(lm_ - mx[ep][:, None])
+                if ne:
+                    e_E = e_E * torch.exp(lE - mx[ep][:, None])
                 ll = ll + mx * real[t]
             if any_un:
                 e_stay = torch.where(un, (alpha0 * E0z).sum(1)[ep], e_stay)
             if ok_c is not None:
                 e_mv = e_mv * ok_c.reshape(R, M).float()
-            contrib = torch.cat([(q * e_stay)[:, None], (1 - q)[:, None] * e_mv / M], 1)
+            parts = [(q * e_stay)[:, None], (1 - q)[:, None] * e_mv / M]
+            if ne:
+                parts.append((1 - q)[:, None] * torch.exp(lpE) * e_E * okE.float())
+            contrib = torch.cat(parts, 1)
             # The floor must be representable in float32 (1e-300 rounds to 0): without it a sharp
             # summary model can leave a particle with no option of nonzero weight (entry 69).
             contrib = torch.nan_to_num(contrib, nan=0.0, posinf=0.0).clamp(min=0)
@@ -675,9 +729,8 @@ class Fit:
             ll = ll + torch.log(wb.mean(1).clamp(min=tiny)) * real[t]
             choice = torch.multinomial(contrib, 1, generator=gen)[:, 0]
             mv = (choice > 0) & rt
-            newf = torch.where(
-                mv[:, None], cand.reshape(R, M, d)[ar, (choice - 1).clamp(min=0)], cur
-            )
+            pool = cand.reshape(R, M, d) if not ne else torch.cat([cand.reshape(R, M, d), E], 1)
+            newf = torch.where(mv[:, None], pool[ar, (choice - 1).clamp(min=0)], cur)
             at = L.clamp(max=D.ctx - 1)
             hist[ar, at] = torch.where(mv[:, None], newf, hist[ar, at])
             first = mv & un
@@ -819,12 +872,16 @@ class Fit:
             # jointly (entry 72). Read from the frame structure alone.
             looks = [(j, u[1]) for j, u in enumerate(D.units.units) if u[0] == "looks"]
             together = [(a, b) for (a, ta), (b, tb) in itertools.combinations(looks, 2) if ta == tb]
+        extra = None
+        if cfg.split_looks:
+            extra = [j for j, u in enumerate(D.units.units) if u[0] == "looks"]
         out = split_moves(
             z,
             views,
             prior,
             self.gauss,
             weakest=cfg.split_weakest,
+            extra=extra,
             rounds=cfg.split_rounds,
             together=together,
             orders=cfg.split_orders,
@@ -1050,6 +1107,7 @@ class GridDecipherer(Decipherer):
         if cfg.frame_model == COUNTS:
             raise ValueError("the counted-transitions control isn't implemented for grid video yet")
         self.fm = load_model(self.pair / "models" / cfg.frame_model, device)
+        self.fm.use_graph = cfg.sampler_graph
         for p in self.fm.parameters():
             p.requires_grad_(False)
         self.ctx = self.fm.backbone.cfg.context
@@ -1086,6 +1144,69 @@ class GridDecipherer(Decipherer):
             cols = [j for j, u in enumerate(units) if u[0] in ("at", "gone") and u[1] == k]
             self.thing_changes[k] = float((wt * (changed[:, cols].sum(1) > 0).float()).sum())
         self.word_counts = np.bincount(self.lang.tokens, minlength=self.V).astype(float)
+        # How often each unit turns on and off per frame step (for the rate prior, entry 93).
+        tot = float(wt.sum())
+        off = (u0 - u1).clamp(min=0)
+        self.change_rate = (
+            (wt[:, None] * on).sum(0).cpu().numpy() / tot,
+            (wt[:, None] * off).sum(0).cpu().numpy() / tot,
+        )
+
+    def position_share(self) -> np.ndarray:
+        """For each word, the share of its occurrences at each sentence position (J x V), from
+        the language stream alone, with sentences cut as ``make_batches`` cuts them."""
+        if getattr(self, "_pos_share", None) is None:
+            w = self.lang.words
+            t = self.lang.tokens[self.lang.tokens != w.index(EPISODE)]
+            stop = t == w.index(STOP)
+            idx = np.arange(len(t))
+            last = np.maximum.accumulate(np.where(stop, idx, -1))
+            prev = np.concatenate([[-1], last[:-1]])
+            pos = idx - prev - 1
+            keep = ~stop & (pos < self.J)
+            c = np.zeros((self.J, self.V))
+            np.add.at(c, (pos[keep], t[keep]), 1.0)
+            self._pos_share = c / np.maximum(c.sum(0, keepdims=True), 1.0)
+        return self._pos_share
+
+    def rate_matches(
+        self, words, tol: float = 0.1, close: float = 0.05, kinds=("looks", "gone")
+    ) -> list[tuple[int, int]]:
+        """(feature, word) pairs for the rate prior, from each stream's own statistics.
+
+        Every change is reported in the language, so a word that reports a kind of change is said
+        about as often, per frame step, as that change happens, summed over the things it can
+        happen to. Changes of one kind (a unit type turning on, or off) are grouped when their
+        rates are within ``close`` of each other, and each word is tied to every group whose
+        summed rate is within ``tol`` of its own (in log terms). Sentences are converted to frame
+        steps with the episodes' lengths alone (1 - q). Only appearance changes and disappearances
+        by default: rates alone also match places and carrying by coincidence (entry 93)."""
+        U = self.U
+        n_sent = float((self.lang.tokens == self.lang.words.index(STOP)).sum())
+        per_step = self.word_counts / n_sent / max(1e-9, 1 - self.q)
+        groups = []
+        for typ, rates in ((1, self.change_rate[0]), (2, self.change_rate[1])):
+            for kind in kinds:
+                js = sorted(
+                    (j for j, u in enumerate(self.units.units) if u[0] == kind and rates[j] > 0),
+                    key=lambda j: rates[j],
+                )
+                cur: list[int] = []
+                for j in js:
+                    if cur and rates[j] > rates[cur[0]] * (1 + close):
+                        groups.append(([typ * U + i for i in cur], float(rates[cur].sum())))
+                        cur = []
+                    cur.append(j)
+                if cur:
+                    groups.append(([typ * U + i for i in cur], float(rates[cur].sum())))
+        out = []
+        for w in words:
+            if per_step[w] <= 0:
+                continue
+            for fs, r in groups:
+                if abs(np.log(per_step[w] / r)) < np.log(1 + tol):
+                    out.extend((f, w) for f in fs)
+        return out
 
     def _grid_starts(self, obs) -> None:
         """Start frames seen in the frame stream's training episodes, one per distinct unit view."""
@@ -1120,6 +1241,44 @@ class GridDecipherer(Decipherer):
 
     def valid(self, c: torch.Tensor) -> torch.Tensor | None:
         return self.view.valid(c) if self.cfg.valid_only else None
+
+    def edits(self, cur: torch.Tensor):
+        """For each frame, the frames one appearance change or one disappearance away, and
+        which of them exist (entry 94). Read from the frame structure alone: a thing's appearance
+        is the channel it is drawn in, and changing it keeps the cell."""
+        if getattr(self, "_edit_plan", None) is None:
+            n_ch = self.units.shape[2]
+            plan = []
+            for k, vals in enumerate(self.units.things):
+                chans = sorted({v % n_ch for v in vals})
+                member = torch.zeros(self.d, dtype=torch.bool, device=self.dev)
+                member[list(vals)] = True
+                vt = torch.tensor(sorted(vals), device=self.dev)
+                for c2 in chans if len(chans) > 1 else []:
+                    plan.append((vt, member, c2))
+                if k in self.view.gone:
+                    plan.append((vt, member, None))
+            self._edit_plan = plan
+        n_ch = self.units.shape[2]
+        R = cur.shape[0]
+        out, ok = [], []
+        rows = torch.arange(R, device=self.dev)
+        for vt, member, c2 in self._edit_plan:
+            on = cur[:, vt] > 0.5  # R x |vals|
+            present = on.any(1)
+            v = vt[on.float().argmax(1)]  # the thing's drawn value (where present)
+            f = cur.clone()
+            if c2 is None:  # the thing disappears
+                f[:, vt] = 0
+                good = present
+            else:  # the thing takes appearance c2 in the same cell
+                v2 = (v // n_ch) * n_ch + c2
+                good = present & (v % n_ch != c2) & member[v2]
+                f[rows, v] = 0
+                f[rows, v2] = 1
+            out.append(f)
+            ok.append(good)
+        return torch.stack(out, 1), torch.stack(ok, 1)
 
     def actor_word(self, c: torch.Tensor, places_t: torch.Tensor) -> torch.Tensor:
         return torch.full((c.shape[0],), self.V, device=self.dev, dtype=torch.long)
