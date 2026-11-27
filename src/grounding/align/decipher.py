@@ -70,6 +70,10 @@ class DecipherConfig:
     # particle's frame, scored by the frame model: rare single changes such as an agent turning
     # hungry are then never missed for want of a sample (entry 94). Grid structure only.
     edit_proposals: bool = False
+    # A sentence may report any change of the most recent move, not only a change since the last
+    # sentence: the language tells one world step as several sentences ("A goes to the river. A is
+    # hungry."), and every change of the step shows in the frame at once (entry 95).
+    recent_change: bool = False
     iterations: int = 12
     own_prior: float = 20.0  # pseudo-counts on each value's own entity words, to start
     # Pseudo-counts tying each other word to the changes that happen about as often as it is said,
@@ -77,6 +81,15 @@ class DecipherConfig:
     rate_prior: float = 0.0
     smooth: float = 0.01
     summary_power: float = 0.2
+    # Bring the summaries in gradually: their weight rises from summary_ramp_start to
+    # summary_power over the first summary_ramp iterations, so the words shape the frames before
+    # the summaries can lock early guesses in (0: off; entry 97).
+    summary_ramp: int = 0
+    # Before the first filter pass, fit the summary model to the summaries' own distribution (a
+    # mixture over the frame stream's unit views, then split moves), so the filter starts with
+    # it instead of none (entry 97). No pairing. Grid structure only.
+    summary_first: bool = False
+    summary_ramp_start: float = 0.1
     summary_features: str = "linear"  # "linear": the frame; "pairs": also products of live values
     emission: str = "sentence"  # "word": each word from any fact; "sentence": all from one fact
     summary_from: int = 5  # iteration from which the summaries count
@@ -595,7 +608,7 @@ class Fit:
         ep = torch.arange(Be, device=dev).repeat_interleave(N)
         ar = torch.arange(R, device=dev)
         G = self.gauss if (use_summary and b.z is not None) else None
-        kappa = cfg.summary_power
+        kappa = getattr(self, "kappa_now", cfg.summary_power)
         TS = self.start_tables()
         e0 = self.start_emit(TS, tok[0])
         ll = torch.log(e0.mean(1))
@@ -618,6 +631,9 @@ class Fit:
         if G is not None:
             MS = G.mean(D.start_u)
         no = torch.zeros(R, dtype=torch.bool, device=dev)
+        recent_on = cfg.recent_change
+        last_prev = hist[:, 0].clone()  # each particle's frame before its most recent move
+        u_last = D.view(last_prev) if recent_on else None  # and its unit view, kept with it
         # Fixed for the whole pass, so made once (each was a small host-to-GPU copy or a wait
         # for the GPU at every step). The numbers are the same.
         q_real, q_one = torch.tensor(D.q, device=dev), torch.tensor(1.0, device=dev)
@@ -636,6 +652,9 @@ class Fit:
                 E0 = self.start_emit(TS, tok[t])
                 draw = torch.multinomial(alpha0, N, replacement=True, generator=gen).reshape(-1)
                 hist[:, 0] = torch.where(un[:, None], D.start[draw], hist[:, 0])
+                if recent_on:
+                    last_prev = torch.where(un[:, None], hist[:, 0], last_prev)
+                    u_last = torch.where(un[:, None], D.view(hist[:, 0]), u_last)
                 if inc:
                     idx = torch.nonzero(un).flatten()
                     h = h.clone()
@@ -647,9 +666,23 @@ class Fit:
             q = torch.where(L >= D.ctx, torch.ones_like(q), q)
             # Each frame's unit view, computed once per step (it was computed up to four times).
             u_cur = D.view(cur)
-            e_stay = self.emit_words(
-                tok[t], cur, cur, no, no_actor, views=(u_cur, u_cur), rows=ep, focus=focus
-            )
+            if recent_on:
+                # Staying, a sentence may still report the changes of the most recent move.
+                recent = (last_prev != cur).any(1)
+                e_stay = self.emit_words(
+                    tok[t],
+                    last_prev,
+                    cur,
+                    recent,
+                    no_actor,
+                    views=(u_last, u_cur),
+                    rows=ep,
+                    focus=focus,
+                )
+            else:
+                e_stay = self.emit_words(
+                    tok[t], cur, cur, no, no_actor, views=(u_cur, u_cur), rows=ep, focus=focus
+                )
             cand = D.fm.sample_next(h.repeat_interleave(M, 0), gen)
             ok_c = D.valid(cand)
             aw = D.actor_word(cand, self.places_t)
@@ -749,6 +782,9 @@ class Fit:
                 wb / wb.sum(1, keepdim=True), N, replacement=True, generator=gen
             )
             src = (idx + torch.arange(Be, device=dev)[:, None] * N).reshape(-1)
+            if recent_on:
+                last_prev = torch.where(mv[:, None], cur, last_prev)[src]
+                u_last = torch.where(mv[:, None], u_cur, u_last)[src]
             hist, L, traj, moved_t = hist[src], L[src], traj[src], moved_t[src]
             if inc:
                 cache = [[K[src], V[src]] for K, V in cache]
@@ -780,6 +816,15 @@ class Fit:
                 one = torch.arange(Be, device=self.D.dev) * N + k
                 tr, m_ = traj[one].float(), mv[one]
                 prev = torch.cat([tr[:, :1], tr[:, :-1]], 1)
+                if self.D.cfg.recent_change:
+                    # Each sentence pairs with the frame before the most recent move (as the
+                    # filter does), and counts as reporting a change if there was one.
+                    T_ = tr.shape[1]
+                    idx = torch.arange(T_, device=tr.device)[None].expand(len(tr), T_)
+                    last = torch.cummax(torch.where(m_, idx, torch.zeros_like(idx)), 1).values
+                    prev = tr.gather(1, (last - 1).clamp(min=0)[..., None].expand_as(tr))
+                    prev = torch.where((last > 0)[..., None], prev, tr)
+                    m_ = (prev != tr).any(-1)
                 keep = b.real.T
                 cur = tr[keep]
                 yield (
@@ -838,9 +883,59 @@ class Fit:
         if X and it + 1 >= D.cfg.summary_from:
             self.gauss = Gauss.fit(torch.cat(X), torch.cat(Y), pairs=D.pairs)
 
-    def fit(self, batches: list[Batch], log=print) -> None:
+    def learned(self) -> dict:
+        """Everything the fit has learned (tables, summary model, mixture weights). The particle
+        paths are redrawn every iteration, so this is all a later iteration depends on."""
+        return {k: v for k, v in self.__dict__.items() if k != "D"}
+
+    def fit(
+        self,
+        batches: list[Batch],
+        log=print,
+        checkpoints: Path | None = None,
+        resume: Path | None = None,
+    ) -> None:
+        """``checkpoints``: a folder to save the fit's state into after every iteration.
+        ``resume``: a saved state to continue from, after its iteration. The settings may differ
+        from the saved run's (particles, batch, split moves): that is what resuming is for."""
         t0 = time.time()
-        for it in range(self.D.cfg.iterations):
+        start = 0
+        if resume is not None:
+            saved = torch.load(resume, map_location=self.D.dev, weights_only=False)
+            self.__dict__.update(saved["state"])
+            start = saved["iteration"]
+            changed = {
+                k: (v, getattr(self.D.cfg, k))
+                for k, v in saved["config"].items()
+                if getattr(self.D.cfg, k, v) != v
+            }
+            log(f"    resumed after iteration {start} from {resume}; changed settings {changed}")
+            if saved.get("before_split"):
+                self.split(batches, log)
+        if checkpoints is not None:
+            Path(checkpoints).mkdir(parents=True, exist_ok=True)
+        if (
+            not start
+            and self.D.cfg.summary_first
+            and hasattr(self.D, "unit_prior")
+            and self.gauss is None
+        ):
+            from grounding.align.latent import fit_latent, prune
+
+            z = torch.cat([b.z[b.real] for b in batches])
+            views, prior = prune(*self.D.unit_prior())
+            first = fit_latent(z, views, prior, iterations=60, restarts=4, seed=self.D.cfg.seed)
+            log(f"    summary model from the summaries alone: loglik {first.loglik:.4f}")
+            self.gauss = first.gauss
+            self.split(batches, log)
+            log(f"    then split moves ({time.time() - t0:.0f}s)")
+        for it in range(start, self.D.cfg.iterations):
+            cfg_ = self.D.cfg
+            if cfg_.summary_ramp:
+                frac = min(1.0, (it + 1) / cfg_.summary_ramp)
+                self.kappa_now = cfg_.summary_ramp_start + frac * (
+                    cfg_.summary_power - cfg_.summary_ramp_start
+                )
             paths, ll = self.run(batches, seed=it + 1000 * self.D.cfg.seed)
             self.update(paths, it)
             log(
@@ -853,7 +948,23 @@ class Fit:
                 # the GPU's memory full and spilling into shared memory (entry 82).
                 del paths
                 _free_gpu()
+                if checkpoints is not None:
+                    # Resuming from this one reruns the split step, with whatever split settings.
+                    torch.save(
+                        {
+                            "iteration": it + 1,
+                            "state": self.learned(),
+                            "config": asdict(self.D.cfg),
+                            "before_split": True,
+                        },
+                        Path(checkpoints) / f"iteration-{it + 1:02d}-before-split.pt",
+                    )
                 self.split(batches, log)
+            if checkpoints is not None:
+                torch.save(
+                    {"iteration": it + 1, "state": self.learned(), "config": asdict(self.D.cfg)},
+                    Path(checkpoints) / f"iteration-{it + 1:02d}.pt",
+                )
 
     def split(self, batches: list[Batch], log=print) -> None:
         """Split moves on the summary Gaussian (align.latent.split_moves): facts it has learned
