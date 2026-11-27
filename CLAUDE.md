@@ -30,7 +30,7 @@ These are design commitments. Don't relax any of them without asking first.
 - **No leakage between streams.** The language and observation streams come from independently generated episodes, with randomised lengths. Nothing about episode boundaries, lengths or timing may line up between them.
 - **Renderer checks.** A symmetry in the simulator can be broken by a renderer, for example through different word lengths or frequencies for interchangeable agents, or fixed screen positions. Each symmetry must be verified to survive both renderers before its prediction is registered.
 - **Pre-registration comes first.** Predictions, thresholds and tests are fixed and published before the main conditions run. Don't write analysis code that looks at main-condition results before then.
-- **The alignment method is frozen first.** The method and its hyperparameters are tuned on the cipher control and checked on a separate calibration world, used for nothing else. They're then frozen before the main conditions run.
+- **The alignment method is frozen first.** The method and its hyperparameters are tuned on the pilot world and worlds derived from it, and checked on a separate calibration world, used for nothing else. They're then frozen before the main conditions run, which use new worlds, not pilot variants.
 - **The unit of analysis is an independent pair.** That means one independently sampled corpus pair, one trained model pair and its alignment runs. Restarts within a pair are summarised, never counted as independent samples.
 - **Report everything.** That includes full confusion matrices, the objective diagnostic, every control and both observation formats. Null results are reported too.
 
@@ -43,7 +43,7 @@ Every main result needs these alongside it:
 - **Scrambled world:** the same entities with randomised causal rules.
 - **Grammar only:** invented syntax with random words and no world behind it.
 - **Symmetry-free world:** sets the noise floor for H3.
-- **Cipher of a language stream:** the upper bound on alignment.
+- **Cipher of a language stream:** the upper bound on alignment, recovered by classic substitution decipherment; the same-kind-of-data case the 2026 proof covers.
 - **Identical worlds:** the easiest point on the H4 overlap sweep.
 
 ## Terms

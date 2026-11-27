@@ -31,6 +31,9 @@ Status is **Decided** (code follows it), **Proposed** (current plan, not yet con
 | 23 | The summary model can learn facts the fit's own paths can't teach it (split moves) | Proposed |
 | 24 | What the method assumes, and which pairs are spent on tuning | Proposed |
 | 25 | GPU memory: allocator setting for long runs | Proposed |
+| 26 | The symmetry-free world: agents, places and objects all told apart | Decided |
+| 27 | The cipher control: a literal cipher of a second language corpus | Decided |
+| 28 | Worlds derived from the pilot world count as the pilot world | Decided |
 
 ## 1. Python 3.15, PyTorch, uv
 
@@ -83,7 +86,7 @@ runs/           # outputs (not committed)
 - **Independent streams:** each corpus pair has one root seed. The two streams get separate child seeds via `numpy.random.SeedSequence.spawn`, and each samples its own episode lengths. A test checks that no boundaries or lengths line up.
 - **Hidden ground truth:** everything that reveals what a token or slot means is stored under each pair's `hidden/` directory. Training loaders never open it; only `analysis/labels.py` does, and a test fails if any other module reaches for it.
 - **Symmetry tests:** small worlds are searched exhaustively against exact transition probabilities. Tests assert each world's expected group, for example {identity, agent swap} for the pilot world and the identity alone for the symmetry-free world.
-- **Renderer checks:** for every symmetry, relabelling a trace and then rendering it must give the same statistics as rendering it and then relabelling.
+- **Renderer checks:** for every symmetry, relabelling a trace and then rendering it must give the same statistics as rendering it and then relabelling. Tests cover the language, state vectors and grid video (for grid video: the same frames up to where in its patch each thing sits, each agent equally likely to get each channel, and no fixed screen positions).
 - **Pre-registration firewall:** results of main conditions can't be loaded until `prereg/LOCK` records the commit at which the pre-registration was published. The calibration world is flagged so it can be used only to check the frozen method.
 - **Unit of analysis:** outputs are stored as `runs/<condition>/<pair>/<restart>/`, and restarts are summarised within each pair before any statistics.
 - **Reproducibility:** every run records its config, seeds, git commit, whether there were uncommitted changes, and package versions.
@@ -328,3 +331,24 @@ Nothing in the method reads `hidden/`, but it isn't assumption-free. These are d
 
 Experiment log, entry 78. The particle filter re-runs the frame model on a history one frame longer at every step, and PyTorch's memory cache fragments: one pass used 1.35 GB but reserved 13.5 GB, spilling into system memory and slowing searches two to three times. Long runs set `PYTORCH_CUDA_ALLOC_CONF=garbage_collection_threshold:0.6,roundup_power2_divisions:8`, which changes where tensors are placed, not what is computed (one pass reserved 4.8 GB). Nothing else runs on the GPU beside a search. Caching the frame model's attention would remove the cause.
 
+## 26. The symmetry-free world
+
+The proposal's control "built to have no automorphisms", which sets the noise floor for H3. Measured with `sim/symmetry.py` (violation rates weighted by visits, episodes of 20-60 steps):
+
+- Agent habits break the agent and place symmetries cleanly. With agent A three times as likely to move to the river or the cave, and agent B to the river or the hill, the group is the identity alone. No relabelling of agents or places is closer than 0.06.
+- But every design tried keeps the objects' near-symmetries: stone with apple at 0.02-0.03, and glass with stone or apple at 0.04-0.05. They come from the objects' rules, because eating and breaking are rare, and no agent habit touches them. On grid video these are exactly the swaps the method confused (experiment log, entry 85).
+- **Decided (Shane):** the symmetry-free world also tells the objects apart often, through the objects' rules (for example, an apple eaten much more often), so that its noise floor measures the method's own errors and isn't raised by near-symmetries. The exact rules are chosen by violation rate, so that no relabelling comes close.
+
+## 27. The cipher control under decipherment
+
+The proposal's upper bound: "word-for-word substitution of a second corpus in the same language over the same world". It was written for representation alignment. Decipherment instead reads a language as a code for the world model's frames, so a cipher of a language stream has no frames to be read against.
+
+- **Decided (Shane):** keep a literal cipher. A second language corpus over the same world is ciphered word for word, gets its own language model trained from scratch, and decipherment recovers the substitution, in the classic form (Knight et al., 2006).
+- **Why not state vectors as the bound:** state vectors are already reported as the easier observation format, so using them would merge two of the proposal's comparisons. And a cipher pairs two models of the same kind of data, which is the setting of the 2026 proof (Syrota et al.). It gives a reference point where errors are known to follow the symmetries, against which the cross-modal result can be compared.
+- The decipherment for the cipher differs from the frame-based one, which must be stated as a change to the proposal's wording ("the same alignment").
+
+## 28. Worlds derived from the pilot world
+
+Decision 4 says the pilot world must never be reused as a main-condition world or as the calibration world. The lured world (`sim/worlds.py`, experiment log entry 84) is the pilot world with one added rule, and has been used for tuning and for the confirmations in entries 86-88.
+
+- **Decided (Shane):** they count as the pilot world. The main conditions use new worlds, with other places, objects or rules, so nothing tuned on can leak into the main results. The lured world's results stay tuning and confirmation results for the method, not evidence for the hypotheses.

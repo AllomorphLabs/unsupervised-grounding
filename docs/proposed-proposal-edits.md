@@ -109,3 +109,38 @@ right one (19.13 against 18.97-19.00); with them, the right one fitted better (1
 
 **Applied (25 November):** step 7 (*Diagnose*) says both mappings are fitted by the same
 procedure with the same restarts.
+
+## 9. The cipher control, and what the method is tuned on
+
+**Evidence:** technical decision 27 (decided with Shane, 27 November). The proposal's cipher control
+was written for representation alignment. Under decipherment, a language is read against the world
+model's frames, and a ciphered language stream has none.
+
+**Applied (27 November):** the cipher row, *Freezing the method*, the overfitting threat and the
+work plan's phase 4 now say the method is tuned on pilot-derived worlds; the cipher row describes
+its decipherment. CLAUDE.md updated to match.
+
+**Proposed:**
+- *Controls* table, cipher row: keep "word-for-word substitution of a second corpus in the same
+  language over the same world". Add that it is deciphered by classic substitution decipherment
+  (Knight et al., 2006) against its own language model trained from scratch, and that it is the
+  same-kind-of-data case the 2026 proof covers. It is the reference point against which the
+  cross-modal result is compared.
+- *Freezing the method* says the method "is tuned on the cipher control". That no longer holds: the
+  frame-based decipherment was tuned on the pilot world and pilot-derived worlds, as technical
+  decision 4 allows, and the cipher uses a different, simpler decipherment. Proposed wording: "The
+  alignment method and its hyperparameters are tuned on pilot-derived worlds, then checked on a
+  separate calibration world, used for nothing else. They are then frozen before any main
+  condition runs." The cipher is tuned only for its own decipherment.
+- *Threats*, alignment-method overfitting: the same change.
+
+## 10. Main worlds are new worlds, not pilot variants
+
+**Evidence:** technical decision 28 (decided with Shane, 27 November). The lured world (experiment
+log, entry 84) is the pilot world with one added rule, and was used for tuning and confirmation.
+
+**Applied (27 November):** step 1 (*Build the world*) says so.
+
+**Proposed:** where the proposal describes the main worlds, say that they are new worlds (other
+places, objects or rules), not variants of the pilot world, and that results in pilot-derived
+worlds are reported as method development, not as evidence for the hypotheses.

@@ -116,7 +116,7 @@ A near-symmetry can be confused in two ways, and both are counted. Within a pair
 
 One simulated world produces two independent streams, language and observation, from different episodes. Each trains its own model, and the two models are aligned with no paired data. They share nothing but the world behind their data.
 
-1. **Build the world.** A small simulator of agents, objects, places, properties and causal rules (dropping glass breaks it; agents eat when hungry). Symmetries are explicit and switchable: interchangeable agents, mirror-symmetric layouts, objects with identical roles.
+1. **Build the world.** A small simulator of agents, objects, places, properties and causal rules (dropping glass breaks it; agents eat when hungry). Symmetries are explicit and switchable: interchangeable agents, mirror-symmetric layouts, objects with identical roles. The main conditions use new worlds, not variants of the pilot world, so that nothing the method was developed on can leak into them; results in pilot-derived worlds are reported as method development, not as evidence for the hypotheses.
 
 2. **Language stream.** A renderer turns events into an invented language with its own vocabulary and grammar (word order, word endings, tense). Nothing in it resembles English: each word for an action, object or place is generated at random and kept only if it is at least three edits away from the English words for its meaning and at least two edits away from each of the 20,000 most common English words. Words are split into stems and endings, and the models read these as tokens. Two real sentences from the pilot: "tofem ledol -af rizud -az" (Tofem goes to the bush) and "tofem tevuv -ev kipon -az" (Tofem takes the stone).
 
@@ -138,7 +138,7 @@ One simulated world produces two independent streams, language and observation, 
 
 8. **Sweep.** Break symmetries one at a time, by registered amounts. Vary the overlap between the described and observed worlds, including worlds where each stream has entities or events the other lacks. Vary world richness, corpus size and model size.
 
-**Freezing the method.** The alignment method and its hyperparameters are tuned on the cipher control, then checked on a separate calibration world, used for nothing else, with both language and observation streams. They are then frozen before any main condition runs.
+**Freezing the method.** The alignment method and its hyperparameters are tuned on the pilot world and worlds derived from it, then checked on a separate calibration world, used for nothing else, with both language and observation streams. They are then frozen before any main condition runs.
 
 **Starting points.** The pilot's code, which already implements the simulator, the invented language, state-vector frames, both models and decipherment; Othello-GPT's public code for probing and interventions.
 
@@ -153,7 +153,7 @@ Each control rules out one cheap explanation for a positive result.
 | Scrambled world | Same entities, randomised causal rules | Alignment from co-occurrence rather than causal structure |
 | Grammar only | Invented syntax with random words and no world behind it | Alignment driven by syntax or formatting; should be at chance |
 | Symmetry-free world | A world built to have no automorphisms | Sets the noise floor for H3 |
-| Cipher of a language stream | Word-for-word substitution of a second corpus in the same language over the same world | Upper bound for alignment under near-perfect isomorphism |
+| Cipher of a language stream | Word-for-word substitution of a second corpus in the same language over the same world, recovered by classic substitution decipherment against that corpus's own language model | Upper bound for alignment under near-perfect isomorphism; the same-kind-of-data case the 2026 proof covers, as a reference for the cross-modal result |
 | Identical worlds | Both streams from the same world, different episodes | Easiest point of the H4 overlap sweep |
 
 ## Threats to validity
@@ -164,7 +164,7 @@ Each control rules out one cheap explanation for a positive result.
 - **An aligner that does the work.** Decipherment is itself a model of how words express facts, and a strong one could succeed with little help from the trained models. The co-occurrence and lookup-table controls run the identical decipherment with one or both trained models taken out, so they measure what each model contributes.
 - **Structure supplied to the aligner.** Before the streams are compared, each one's units are grouped into kinds: words into classes that name things and places, and frame values into things, places and appearances. In the pilot this grouping was written for that world's formats. It is now found by general procedures from each stream's own statistics, for both observation formats, with no pairing and no ground truth, and is checked against the hidden key only after the fact. The procedures still assume what kinds of thing a world contains (things at places, that can look different, be carried or disappear) and that each sentence states one fact; these assumptions are reported with the results.
 - **Impossible candidate frames.** A world model can propose frames that couldn't occur, such as a thing drawn twice. The aligner gives no weight to candidates that break the structure found in the observation stream itself, and the share of valid proposals is reported for every world model.
-- **Alignment-method overfitting.** Handled by freezing the method on the cipher control and checking it on the calibration world.
+- **Alignment-method overfitting.** Handled by tuning the method only on the pilot world and worlds derived from it, checking it on the calibration world, and freezing it before the main conditions, which use new worlds.
 - **Optimiser failure mistaken for model failure.** Handled by the objective diagnostic.
 - **Renderer-induced asymmetry.** Handled by the renderer checks.
 - **Lexical leakage.** If invented words looked like English, a pretrained component or a person inspecting the data could pair words with referents by spelling rather than by structure. No pretrained weights or tokenisers are used, and every word form passes the edit-distance check.
@@ -294,7 +294,7 @@ The work runs in five gated phases over about eight months, all at single-GPU sc
 1. **Pilot (2 weeks; complete).** Two interchangeable agents among a handful of distinguishable objects and places, state-vector observations only. Gate: alignment beats the co-occurrence baseline, and variance estimates are in hand for the power analysis. Met.
 2. **Literature and novelty check (2 weeks; complete).** Gate: the design is confirmed as novel, or adjusted. Met: the design was adjusted, as this version describes. A few remaining full-text reads, listed in the literature review, continue alongside phase 3.
 3. **World, streams and pre-registration (6 weeks).** Build the full simulator with switchable symmetries, the grid-video renderer and all controls. Compute each world's symmetries, near-symmetries, violation rates and symmetry costs, set the strength of each symmetry-breaking intervention, run the renderer checks and the power analysis, and pre-register predictions, thresholds and tests. Gate: pre-registration published.
-4. **Train and align (10 weeks).** Freeze the alignment method on the cipher control and the calibration world, then run the identical-worlds condition, the main conditions and all controls. Gate: the H1 sanity check passes. If it fails, scale up the model or the world rather than stopping.
+4. **Train and align (10 weeks).** Freeze the alignment method, checked on the calibration world, then run the identical-worlds condition, the main conditions and all controls. Gate: the H1 sanity check passes. If it fails, scale up the model or the world rather than stopping.
 5. **Sweeps and write-up (12 weeks).** Symmetry-breaking interventions, the overlap and richness sweeps, analysis, and publication of code, data and results, including nulls.
 
 | Resource | Estimate |
