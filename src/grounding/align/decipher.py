@@ -78,6 +78,10 @@ class DecipherConfig:
     shortlist: int = 6
     # Split moves on the summary model after this iteration (0: off; units only, entry 69).
     split_at: int = 0
+    # Keep the frame model's keys and values for each particle's history, so a step puts only the
+    # new frame through the model instead of the whole history. The same model up to the order of
+    # floating-point sums (entry 79); off reproduces earlier runs exactly.
+    context_cache: bool = False
     split_weakest: int = 0  # facts of smallest effect to try (0: those below a quarter of median)
     split_rounds: int = 1
     split_orders: int = 1  # orders of the weak facts to try, keeping the likeliest (entry 74)
@@ -511,17 +515,26 @@ class Fit:
         self.t.pc = D.tie(self.t.cc, torch.arange(D.U, 3 * D.U + 1, device=D.dev), self.tying_)
 
     # -- emissions -------------------------------------------------------------------------------
-    def feats(self, prev: torch.Tensor, cur: torch.Tensor):
-        prev, cur = self.D.view(prev), self.D.view(cur)
+    def feats(self, prev: torch.Tensor, cur: torch.Tensor, views=None):
+        """``views``: the unit views of (prev, cur), if already computed."""
+        prev, cur = views if views is not None else (self.D.view(prev), self.D.view(cur))
         fs = cur / cur.sum(1, keepdim=True).clamp(min=1)
         on, off = (cur - prev).clamp(min=0), (prev - cur).clamp(min=0)
         dc = torch.cat([on, off, ((on.sum(1) + off.sum(1)) == 0).float()[:, None]], 1)
         return fs, dc / dc.sum(1, keepdim=True)
 
-    def emit_words(self, tok, prev, cur, moved, actw) -> torch.Tensor:
-        """Probability of each sentence given (prev -> cur); ``moved`` says whether it stepped."""
+    def emit_words(
+        self, tok, prev, cur, moved, actw, views=None, rows=None, focus=None
+    ) -> torch.Tensor:
+        """Probability of each sentence given (prev -> cur); ``moved`` says whether it stepped.
+
+        ``views``: the unit views of (prev, cur), if already computed. ``rows``: ``tok`` holds
+        each distinct sentence once, and item i reads sentence ``rows[i]``. ``focus``: unused
+        here (``SentenceFit``)."""
         V, t = self.D.V, self.t
-        fs, dc = self.feats(prev, cur)
+        if rows is not None:
+            tok = tok[rows]
+        fs, dc = self.feats(prev, cur, views)
         out = torch.ones(len(tok), device=self.D.dev)
         for j in range(tok.shape[1]):
             l0, ls, lc, la = t.lam[j].tolist()
@@ -576,44 +589,69 @@ class Fit:
         traj = torch.zeros(R, Tm, d, dtype=torch.uint8, device=dev)
         traj[:, 0] = hist[:, 0].to(torch.uint8)
         moved_t = torch.zeros(R, Tm, dtype=torch.bool, device=dev)
-        h = D.fm.context(hist[:, :1])[:, 0]
+        inc = cfg.context_cache and hasattr(D.fm, "context_at")
+        if inc:
+            cache = D.fm.context_cache(R, D.ctx)
+            h = D.fm.context_at(cache, hist[:, 0], torch.zeros_like(L), ar)
+        else:
+            h = D.fm.context(hist[:, :1])[:, 0]
         if G is not None:
             MS = G.mean(D.start_u)
         no = torch.zeros(R, dtype=torch.bool, device=dev)
+        # Fixed for the whole pass, so made once (each was a small host-to-GPU copy or a wait
+        # for the GPU at every step). The numbers are the same.
+        q_real, q_one = torch.tensor(D.q, device=dev), torch.tensor(1.0, device=dev)
+        no_actor = torch.full((R,), D.V, device=dev)
+        all_moved = torch.ones(R * M, dtype=torch.bool, device=dev)
+        ep_m = ep.repeat_interleave(M, 0)  # the episode of each candidate
+        focus = (self.sig / self.sig.sum()).tolist() if hasattr(self, "sig") else None
         for t in range(1, Tm):
             rt = real[t][ep]
             if not rt.any():
                 continue
-            tk = tok[t][ep]
             un = L == 1
-            if un.any():
+            any_un = bool(un.any())  # one wait for the GPU per step, not five
+            if any_un:
                 E0 = self.start_emit(TS, tok[t])
                 draw = torch.multinomial(alpha0, N, replacement=True, generator=gen).reshape(-1)
-                hist[un, 0] = D.start[draw[un]]
-                h = torch.where(un[:, None], D.fm.context(hist[:, :1])[:, 0], h)
+                hist[:, 0] = torch.where(un[:, None], D.start[draw], hist[:, 0])
+                if inc:
+                    idx = torch.nonzero(un).flatten()
+                    h = h.clone()
+                    h[idx] = D.fm.context_at(cache, hist[idx, 0], torch.zeros_like(idx), idx)
+                else:
+                    h = torch.where(un[:, None], D.fm.context(hist[:, :1])[:, 0], h)
             cur = hist[ar, L - 1]
-            q = torch.where(rt, torch.tensor(D.q, device=dev), torch.tensor(1.0, device=dev))
+            q = torch.where(rt, q_real, q_one)
             q = torch.where(L >= D.ctx, torch.ones_like(q), q)
-            e_stay = self.emit_words(tk, cur, cur, no, torch.full((R,), D.V, device=dev))
+            # Each frame's unit view, computed once per step (it was computed up to four times).
+            u_cur = D.view(cur)
+            e_stay = self.emit_words(
+                tok[t], cur, cur, no, no_actor, views=(u_cur, u_cur), rows=ep, focus=focus
+            )
             cand = D.fm.sample_next(h.repeat_interleave(M, 0), gen)
             ok_c = D.valid(cand)
             aw = D.actor_word(cand, self.places_t)
+            u_cand = D.view(cand)
             e_mv = self.emit_words(
-                tk.repeat_interleave(M, 0),
+                tok[t],
                 cur.repeat_interleave(M, 0),
                 cand,
-                torch.ones(R * M, dtype=torch.bool, device=dev),
+                all_moved,
                 aw,
+                views=(u_cur.repeat_interleave(M, 0), u_cand),
+                rows=ep_m,
+                focus=focus,
             ).reshape(R, M)
-            E0z = E0 if un.any() else None
+            E0z = E0 if any_un else None
             if G is not None:
                 zt = b.z[t][ep]
-                ls_ = kappa * G.logp(D.view(cur), zt)
-                lm_ = kappa * G.logp(D.view(cand), zt.repeat_interleave(M, 0)).reshape(R, M)
+                ls_ = kappa * G.logp(u_cur, zt)
+                lm_ = kappa * G.logp(u_cand, zt.repeat_interleave(M, 0)).reshape(R, M)
                 mx = torch.maximum(
                     ls_.reshape(Be, N).max(1).values, lm_.reshape(Be, -1).max(1).values
                 )
-                if un.any():
+                if any_un:
                     r0 = (b.z[t][:, None, :] - MS[None]) @ G.A
                     lp0 = kappa * (-0.5 * (r0 * r0).sum(-1) + G.norm)
                     mx = torch.maximum(mx, lp0.max(1).values)
@@ -621,7 +659,7 @@ class Fit:
                 e_stay = e_stay * torch.exp(ls_ - mx[ep])
                 e_mv = e_mv * torch.exp(lm_ - mx[ep][:, None])
                 ll = ll + mx * real[t]
-            if un.any():
+            if any_un:
                 e_stay = torch.where(un, (alpha0 * E0z).sum(1)[ep], e_stay)
             if ok_c is not None:
                 e_mv = e_mv * ok_c.reshape(R, M).float()
@@ -648,7 +686,7 @@ class Fit:
             L = L + mv.long()
             traj[:, t] = newf.to(torch.uint8)
             moved_t[:, t] = mv
-            if un.any():
+            if any_un:
                 # Same float32 floor as below: if every start view's weight underflows, the odds
                 # would become 0/0 (entry 69).
                 alpha0 = torch.nan_to_num(alpha0 * E0z, nan=0.0, posinf=0.0) + tiny
@@ -659,7 +697,15 @@ class Fit:
             )
             src = (idx + torch.arange(Be, device=dev)[:, None] * N).reshape(-1)
             hist, L, traj, moved_t = hist[src], L[src], traj[src], moved_t[src]
-            h = D.fm.context(hist[:, : int(L.max())])[ar, L - 1] if mv.any() else h[src]
+            if inc:
+                cache = [[K[src], V[src]] for K, V in cache]
+                h = h[src]
+                idx = torch.nonzero(mv[src]).flatten()
+                if len(idx):
+                    p_ = L[idx] - 1
+                    h[idx] = D.fm.context_at(cache, hist[idx, p_], p_, idx)
+            else:
+                h = D.fm.context(hist[:, : int(L.max())])[ar, L - 1] if mv.any() else h[src]
         return ll, traj, moved_t
 
     def run(self, batches: list[Batch], seed: int, use_summary: bool = True):
@@ -749,6 +795,11 @@ class Fit:
                 f"fit {ll:.4f} ({time.time() - t0:.0f}s)"
             )
             if self.D.cfg.split_at and it + 1 == self.D.cfg.split_at and self.gauss is not None:
+                # The filter's particle paths are no longer needed. Release them and the
+                # allocator's cache first: on state vectors the split step otherwise ran with
+                # the GPU's memory full and spilling into shared memory (entry 82).
+                del paths
+                _free_gpu()
                 self.split(batches, log)
 
     def split(self, batches: list[Batch], log=print) -> None:
@@ -843,8 +894,11 @@ class SentenceFit(Fit):
         self.t.lam = torch.tensor([0.45, 0.45, 0.1], device=D.dev)[None].repeat(D.J, 1)
         self.sig = torch.tensor([0.55, 0.45], device=D.dev)
 
-    def _per_feature(self, tok, actw, moved):
-        """For each item, feature and position: the three parts of P_j(w_j | f), and pads."""
+    def _per_feature(self, tok, actw, moved, rows=None):
+        """For each item, feature and position: the three parts of P_j(w_j | f), and pads.
+
+        ``rows``: ``tok`` holds each distinct sentence once and item i reads ``rows[i]``; the
+        word look-ups are then done once per sentence and copied, which gives the same numbers."""
         V, t = self.D.V, self.t
         ok = tok < V
         wc = tok.clamp(max=V - 1)
@@ -858,25 +912,31 @@ class SentenceFit(Fit):
             2,
         )  # n x F x J
         b = mu[:, 1][None, None] * T
+        if rows is not None:
+            ok, wc, a, b = ok[rows], wc[rows], a[rows], b[rows]
         c = mu[:, 2][None] * (wc == actw[:, None]).float() * moved[:, None].float()
         scale = torch.where(moved[:, None], 1.0, 1.0 / (mu[:, 0] + mu[:, 1])[None])  # n x J
         return a, b, c, scale, ok
 
-    def _focus(self, prev, cur, moved):
-        fs, dc = self.feats(prev, cur)
-        s0, s1 = (self.sig / self.sig.sum()).tolist()
+    def _focus(self, prev, cur, moved, views=None, focus=None):
+        """``focus``: the two shares of ``sig``, if already read (they are fixed during a pass)."""
+        fs, dc = self.feats(prev, cur, views)
+        s0, s1 = focus if focus is not None else (self.sig / self.sig.sum()).tolist()
         pi_mv = torch.cat([s0 * fs, s1 * dc], 1)
         pi_st = torch.cat([fs, torch.zeros_like(dc)], 1)
         return torch.where(moved[:, None], pi_mv, pi_st)
 
-    def _weights(self, tok, prev, cur, moved, actw):
-        a, b, c, scale, ok = self._per_feature(tok, actw, moved)
+    def _weights(self, tok, prev, cur, moved, actw, views=None, rows=None, focus=None):
+        a, b, c, scale, ok = self._per_feature(tok, actw, moved, rows)
         P = (a[:, None] + b + c[:, None]) * scale[:, None]  # n x F x J
         P = torch.where(ok[:, None], P, torch.ones_like(P))
-        return self._focus(prev, cur, moved) * P.prod(-1), (a, b, c, scale, ok, P)
+        pi = self._focus(prev, cur, moved, views, focus)
+        return pi * P.prod(-1), (a, b, c, scale, ok, P)
 
-    def emit_words(self, tok, prev, cur, moved, actw) -> torch.Tensor:
-        return self._weights(tok, prev, cur, moved, actw)[0].sum(1)
+    def emit_words(
+        self, tok, prev, cur, moved, actw, views=None, rows=None, focus=None
+    ) -> torch.Tensor:
+        return self._weights(tok, prev, cur, moved, actw, views, rows, focus)[0].sum(1)
 
     def start_tables(self):
         """Per position: each value's stay probability of each word (d x V+1, pad column 1)."""

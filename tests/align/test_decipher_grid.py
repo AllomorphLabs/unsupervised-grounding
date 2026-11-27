@@ -86,3 +86,27 @@ def test_split_moves_run_inside_a_fit(pair):
     cfg = replace(TINY, screen=0, shortlist=1, iterations=3, summary_from=1, split_at=2)
     summary = decipher_pair(pair, cfg, "cpu", name="split", log=lambda s: None)
     assert len(summary["finalists"]) == 1
+
+
+def test_context_cache_gives_the_same_filter(pair):
+    """The cached context changes only the order of floating-point sums (entry 79)."""
+    import torch
+
+    from grounding.align.decipher import make_batches, sample, standardise
+    from grounding.models.train import load_model
+    from grounding.runs.record import read_record
+
+    out = []
+    for cached in (False, True):
+        cfg = replace(TINY, screen=0, context_cache=cached)
+        D = GridDecipherer(pair, cfg, "cpu")
+        eps = sample(D.lang, read_record(pair / "data").seed, cfg)
+        b = make_batches(
+            D.lang, eps["fit"], cfg, load_model(pair / "models" / cfg.lang_model, "cpu"), "cpu"
+        )
+        standardise(b)
+        f = make_fit(D, D.matchings()[0])
+        paths, ll = f.run(b, seed=3)
+        out.append((ll, torch.cat([p[1].flatten() for p in paths])))
+    assert abs(out[0][0] - out[1][0]) < 1e-4 * max(1.0, abs(out[0][0]))
+    assert (out[0][1] == out[1][1]).float().mean() > 0.99
