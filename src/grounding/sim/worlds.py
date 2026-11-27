@@ -35,6 +35,34 @@ def pilot(habit: Fraction | int | str | None = None, feeding: bool = True) -> Wo
     )
 
 
+def lured(weight: Fraction | int | str = 3) -> World:
+    """The pilot world with the places' mirror strongly broken (experiment log, entry 84).
+
+    In the pilot the path's mirror (river <-> hill, bush <-> cave) is broken only by feeding at
+    the bush; its violation rate is about 7%, and the alignment confused it. Here both agents
+    are also ``weight`` times as likely to choose moving to the river or the cave. The mirror
+    would put that preference at the hill and the bush, so it is broken by every move, not only
+    through hunger: its violation rate is about 25% at weight 3. Both agents get the same
+    preference, so the agent swap stays an exact symmetry.
+    """
+    w = Fraction(weight)
+    base = pilot()
+    return World(
+        agents=base.agents,
+        places=base.places,
+        edges=base.edges,
+        objects=base.objects,
+        fragile=base.fragile,
+        edible=base.edible,
+        feeding=base.feeding,
+        habits=tuple(
+            Habit(agent=a, place=p, weight=w)
+            for a in range(len(base.agents))
+            for p in (RIVER, CAVE)
+        ),
+    )
+
+
 def tiny(habit: Fraction | int | str | None = None) -> World:
     """A cut-down pilot world for fast tests: three places, glass and stone.
 
@@ -53,7 +81,7 @@ def tiny(habit: Fraction | int | str | None = None) -> World:
     )
 
 
-WORLDS = {"pilot": pilot, "tiny": tiny}
+WORLDS = {"pilot": pilot, "lured": lured, "tiny": tiny}
 
 
 def make_world(name: str, **args) -> World:

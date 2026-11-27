@@ -15,6 +15,8 @@ CONDITIONS: dict[str, bool] = {
     "pilot": False,
     "pilot-grid": False,  # phase 3, step 1: grid video in the pilot world
     "pilot-grid-actor": False,  # the same, with the acting agent's cell marked (entry 66)
+    "pilot-lured": False,  # the pilot world with the places' mirror strongly broken (entry 84)
+    "pilot-grid-lured": False,  # the same world, observed as grid video
 }
 
 

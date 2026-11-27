@@ -1,0 +1,9 @@
+# The lured pilot world (entry 84), observed as grid video. Pair k uses root seed k, so its
+# language stream is identical to pilot-lured pair k's.
+world: lured
+episodes: 50000  # per stream
+min_len: 20
+max_len: 60
+held_out: 0.1
+recap: 0.1
+observation: grid

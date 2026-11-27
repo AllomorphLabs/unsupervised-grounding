@@ -20,27 +20,35 @@ taught us.
 
 ## Where we are now
 
-*(Updated as the work moves on. Last updated after experiment 80.)*
+*(Updated as the work moves on. Last updated after experiment 86.)*
 
-**Phase 3, grid video and state vectors with nothing hand-written (entries 56-80).**
+**Phase 3, grid video and state vectors with nothing hand-written (entries 56-86).**
 - Both observation formats find their structure from their own statistics, and the words'
   kinds come from the language alone; the search leaves the agents' order free.
 - **Hunger on grid video is solved under the true matching** (entries 69-76): split moves teach
-  the summary model both agents' hunger with no pairing, reliably across move orders. Exact frames
-  rise from about 20% to 37-47% (oracle summary model: 64%); the objects' places (73-88%) are
-  what is left.
-- **State vectors:** the statistics-only parser gives the right structure and thing words, but
-  the selection chose the places' mirror image, a near-symmetry broken only by feeding at the bush
-  (entry 71). The words alone, the summaries' distribution alone (entry 77) and the frame
-  model's dynamics alone (entry 80) all fail to break it; split moves inside the fit did, in a
-  direct comparison of the two readings (entry 75).
-- **Searches were slowed by GPU memory fragmentation** (entry 78), now fixed by an allocator
-  setting; faster filter and split-move code is on the `feat/perf` branch, tested on the CPU
-  (entry 79).
-- **Tuning pairs:** pilot pairs 0-2 and grid pair 0 have been used to make choices while looking
-  at the truth, so they can't confirm the method (technical decision 24).
-- **Running:** the full grid search with split moves (no truth), then the full state-vector
-  search with split moves. Grid pairs 1 and 2 are generated, with frame models queued. [TBD]
+  the summary model both agents' hunger with no pairing, reliably across move orders.
+- **In the pilot world the selection chooses the places' mirror,** a near-symmetry broken only by
+  feeding at the bush (violation rate 0.07). That happens on state vectors (entry 71) and on grid
+  video (entry 81). Restarting the fits doesn't help: a better fit of the mirror scores higher
+  (entry 84).
+- **In the lured world** (entry 84), both agents prefer the river and the cave, which raises
+  the mirror's violation rate to 0.25. There the grid search rejects every wrong reading of the
+  places (entry 85). It confuses only object words that the world barely tells apart (violation
+  rates 0.03-0.05). The selected reading is the truth with the stone and apple words exchanged,
+  32% of frames exact once that is allowed for; the true reading decodes 43%. **Across the two
+  worlds the confusions follow the violation rate,** as H3 predicts.
+- **Speed:** a faster filter, a cached context and a CUDA-graph frame sampler reproduce the
+  current code exactly on the GPU (entry 83). With them a grid search takes about 4 hours,
+  against 8. They are on the `feat/perf` branch, not yet merged.
+- **Tuning pairs:** pilot pairs 0-2, grid pair 0 and the lured pairs 0 have been used to make
+  choices while looking at the truth, so they can't confirm the method (technical decision 24).
+- **State vectors in the lured world: the first full success** (entry 86). With nothing
+  hand-written and no hints, the search selects the true reading: 68% of frames exactly right.
+  Every wrong reading of the places loses, and by more the more strongly the world breaks it
+  (gaps of 0.6, 1.1 and 1.4 at violation rates 0.25, 0.45 and 0.51).
+- **Confirmed on fresh pair 1** (entry 87): selected the truth, 62.9% exact.
+- **Running:** confirmation with the method frozen (entry 86), once each, on the fresh
+  `pilot-lured` pairs 1 and 2 (state vectors), then grid pair 1. [TBD]
 
 **The pilot (entries 1-55).** The state of the pilot when it ended:
 
@@ -1866,3 +1874,255 @@ step that sorts frame values and words into kinds, and the search that fixed the
     getting hunger right. Dropped as a selection fix.
   - For H3 this is the expected pattern: a near-symmetry is confused by every part of the method
     that can't see what breaks it.
+
+**81. On grid video with no truth, the selection chose the places' mirror over a truth fit that misread the apple.**
+- *Why:* the first full grid search with split moves inside every fit, matching not given
+  (`configs/pilot-grid-decipher-split.yaml`): 24 matchings screened, 6 finalists fitted in full.
+- *How:* grid pair 0, restarted with the allocator setting of entry 78. The true matching was
+  screened sixth of 24 and ranked second in screening (45.88, against 45.99 for a reading with
+  two object words exchanged and the places wrong). The search was stopped after 2 of its 6
+  finalists, because finalist 1 had already outscored the true matching, so the selection could
+  no longer choose it; a partial summary was written so the two could be scored.
+- *Result:*
+
+  | | Finalist 1: places mirrored, two object words exchanged | Finalist 2: the true matching |
+  |---|---|---|
+  | Selection score (2 seeds) | **50.32** (50.29, 50.36) | 50.15 (50.17, 50.13) |
+  | Exact frames | 0.1% | 17.4% |
+  | Agent places | 26%, 26% | 97%, 97% |
+  | Hunger, A / B | 64% / 63% | 94% / 96% |
+  | Glass / stone / apple | 14% / 7% / 21% | 77% / 85% / 31% |
+
+  The diagnostic runs under the true matching (entries 74 and 76) read the apple at 73-80% and
+  decoded 37-47% of frames exactly.
+- *Meaning:*
+  - **Split moves work inside the real search:** the true matching's fit reads both agents'
+    hunger at 94-96%, as in the diagnostics.
+  - But that fit settled in a poor optimum for the apple (31%), and lost the selection to a
+    reading that is the places' mirror image, the same near-symmetry as on state vectors (entry
+    71), with two object words also exchanged.
+  - This is the unequal-fits problem the proposal's objective diagnostic now guards against
+    (proposed edit 8): the selection compared one fit of each matching, and a fit can land
+    anywhere. The proposal already asks for every alignment to be restarted several times; the
+    search doesn't yet. Next: refit both matchings from several seeds and compare their best
+    fits. [TBD]
+
+**82. The full state-vector search with split moves ran out of GPU memory speed and was stopped after 2 of 8 finalists, neither of them the truth.**
+- *Why:* the state-vector counterpart of entry 81 (`configs/pilot-decipher-stats-split.yaml`,
+  pilot pair 0): does the selection choose the truth once every finalist is fitted with split
+  moves?
+- *How:* 8 finalists, each fitted for 12 iterations with split moves after iteration 8. Started
+  25 November 23:52 and stopped 26 November 06:24, during finalist 3.
+- *Result:*
+  - Split moves were far slower than in the diagnostics: the first split phase took about 1.9
+    hours and the second about 35 minutes. The third was still running after 3 hours. Normal
+    iterations take about 45 seconds.
+  - The GPU's own 8 GB memory was full, with about 1 GB spilled into shared system memory. That
+    is the likely cause, even with the allocator setting of entry 78.
+  - Both finished finalists are wrong matchings. Scored on CPU from their saved frames:
+
+    | | Finalist 1 | Finalist 2 |
+    |---|---|---|
+    | Selection score (2 seeds) | 17.85 | 17.79 |
+    | Exact frames | 2.5% | 2.6% |
+    | Agent places | 25%, 27% | 44%, 23% |
+    | Hunger, A / B | 63% / 61% | 96% / 87% |
+    | Glass / stone / apple | 44% / 35% / 51% | 49% / 55% / 63% |
+
+  - All 8 finalists had almost the same raw-count mismatch (0.4987 to 0.4989), so screening
+    barely separated them.
+- *Meaning:*
+  - No verdict yet on selection with split moves for state vectors. The search would have
+    needed about 10 more hours at this pace.
+  - The split phase's memory use has to come down before this search is rerun.
+  - Stopping it frees the GPU for the restart test that entry 81 calls for, which comes first
+    because the grid search failed.
+
+**83. The filter speed-ups, the cached context and the sampler graph reproduce the current code exactly on the GPU; the split-move change didn't and was dropped.**
+- *Why:* the rule agreed on 25 November. A speed-up goes into the method only if it gives
+  exactly the same numbers on the GPU. A change that differs by rounding goes in only if a full
+  fit reproduces within restart noise.
+- *How:*
+  - The current code was run twice on the GPU (a small grid pair, grid pair 0 and state-vector
+    pair 0), and the faster code (branch `feat/perf`) once. Values the current code doesn't
+    reproduce from one run to the next were left out of the comparison.
+  - The frame sampler's CUDA graph was compared with the ordinary loop: the same seeds, three
+    consecutive calls, two trials, at 8,192 rows.
+- *Result:*
+  - The faster filter matched the current code bit for bit: the frame sampler's output, the
+    filter's trajectories and its likelihoods, with and without the summary model.
+  - The same was true with the cached context switched on.
+  - The only differences were in the summary model after a short fit with split moves (largest
+    difference 0.23). They come from the one change to the split-move arithmetic, which rounds
+    differently.
+  - The sampler graph was identical on every call, and it left the random generator in the same
+    place.
+  - Times: one filter pass on grid pair 0 took 12.0 seconds, against 17.9 seconds for the
+    current code. The cached context made no further difference at this size (12.2 seconds). The
+    sampler graph took 64 ms per call against 79 ms. The tiny state-vector case was slightly
+    slower (5.6 seconds against 4.4); that is unexplained and still to check.
+- *Meaning:*
+  - The filter changes, the cached context and the sampler graph go into the method: they change
+    the speed, not the numbers.
+  - The split-move change was reverted, because it saves little time. It would only be worth a
+    full-fit check if the split step ever became the bottleneck for that reason.
+  - The restart test (entry 81's next step) was already running on the current code, so the
+    faster code is used from the next GPU job on.
+
+**84. Change of direction: a pilot world where the places' mirror is strongly broken, to test the method without the near-symmetry.**
+- *Why:*
+  - Five attempts (entries 71, 75, 77, 80 and 81) and the start of the restart test have tried to
+    make the method choose the right places over their mirror image in the pilot world.
+  - The world itself barely tells the two apart: the mirror's violation rate is about 7%, and
+    only feeding at the bush breaks it. H3 predicts that such a near-symmetry gets confused. So
+    the method failing on it is no evidence that the method fails in general.
+  - Refitting the mirror reading from a new seed made it score higher (50.50, against 50.32 in
+    entry 81) while it still decoded nothing correctly. A better fit of the wrong reading wins;
+    more restarts can't fix that.
+  - So the next test separates the two questions. Does the method work when the world clearly
+    breaks the mirror? If it does, the pilot world's mirror becomes a measured near-symmetry, the
+    kind H3 is about, rather than an obstacle.
+- *How:*
+  - A new world, `lured` (`sim/worlds.py`): the pilot world, with both agents three times as
+    likely to choose moving to the river or the cave. The mirror would put that preference at
+    the hill and the bush, so every move breaks it.
+  - The mirror's violation rate rises from 0.074 to 0.249 (visit-weighted, episodes of 20-60
+    steps). The agent swap stays exact; the symmetry group is unchanged (a new test checks both).
+  - Two new conditions, `pilot-lured` (state vectors) and `pilot-grid-lured` (grid video). Pair 0
+    of each shares one language stream, which was checked by hash.
+  - Each pair has a new language model and new frame models. The searches are unchanged: the
+    same configs as entries 81 and 82, on the faster code of entry 83, with the split step's
+    memory released first.
+  - Mirror restart from seed 1, for the record: fit 50.72, selection 50.50, exact frames 0%,
+    agent places 25%, hunger 63%, glass, stone and apple 15%, 5% and 22%.
+  - True reading restarted from seed 1: fit 50.20, selection 50.14, exact frames 15%, agent places
+    97%, hunger 94% and 96%, glass, stone and apple 78%, 84% and 29%. That is almost exactly entry
+    81's first fit (50.15, apple 31%). So the apple misreading is systematic, not an unlucky
+    optimum. The restart test was stopped there; restarts don't close a gap of 0.36.
+- *Result:* [TBD]
+- *Result:* see entry 85.
+
+**85. In the lured world the grid search rejects every wrong reading of the places, but confuses object words that the world barely tells apart; the confusions follow the violation rate.**
+- *Why:* entry 84's test. With the places' mirror strongly broken, does the grid search with no
+  pairing choose the true reading?
+- *How:*
+  - Grid pair 0 of `pilot-grid-lured`, searched with the config of entry 81, unchanged, on the
+    faster code. 24 matchings were screened and 6 finalists fitted in full; it took 4 hours,
+    against about 8 for entry 81.
+  - Monitoring only (uses hidden/): `runs/queue/true_rank.py` named each finalist, and each was
+    scored from its saved frames.
+  - Afterwards all 6 finalists were re-scored (`runs/queue/rescore_words.py`), with and without
+    the summary model, on the selection episodes and on 384 unused training episodes.
+  - Each confused relabelling's violation rate was computed in both worlds (visit-weighted,
+    episodes of 20-60 steps).
+- *Result:*
+
+  | Finalist | Reading | Selection | On 384 more | Words only | Exact frames |
+  |---|---|---|---|---|---|
+  | 1, **selected** | stone and apple words exchanged | **53.56** | 53.45 | -3.896 | 7% (32% allowing the exchange) |
+  | 2 | glass and apple words exchanged, agents swapped | 53.48 | 53.32 | -3.898 | 6% (20%) |
+  | 5 | glass and apple words exchanged | 53.22 | 53.09 | -3.900 | 5% (16%) |
+  | 4 | **the true reading**, agents swapped | 53.13 | 53.33 | -3.918 | **43%** |
+  | 6 | places shifted two steps, agents swapped | 52.93 | 52.91 | -3.950 | 0% |
+  | 3 | places shifted two steps | 52.70 | 52.83 | -3.928 | 0% |
+
+  | Relabelling | Violation rate, pilot | Violation rate, lured | Outcome in this search |
+  |---|---|---|---|
+  | stone <-> apple | 0.030 | 0.027 | beat the truth, selected |
+  | glass <-> apple | 0.053 | 0.046 | beat the truth |
+  | places' mirror | 0.074 | 0.249 | not among the finalists (it was chosen in entry 81's pilot world) |
+  | places shifted two steps | 0.325 | 0.345 | scored lowest |
+
+  - The true reading decodes 43% of frames exactly (agent swap allowed), the best yet on grid
+    video. Places are 97%, hunger 94-96% and the objects 66-77%.
+  - Finalists 2 and 5 are the same reading apart from the exact agent swap, yet their scores
+    differ by 0.26. That is a direct measure of fit-to-fit noise. The truth's gap to the selected
+    reading is 0.43.
+- *Meaning:*
+  - **The lure worked.** Every reading with the places wrong scored lowest, by 0.4-0.9. In the
+    pilot world the mirror had won.
+  - What is left are relabellings of the objects. Their violation rates are 0.03-0.05, below
+    even the pilot's mirror (0.07). Glass breaking and an apple being eaten both make an object
+    disappear, and what tells them apart runs through hunger, as with the mirror.
+  - Words alone don't separate them either (-3.896 against -3.918). So this isn't the summary
+    model: on these readings the truth's fit simply explains the words no better.
+  - Across the two worlds the pattern matches H3's graded prediction. Relabellings the world
+    breaks at a rate of 0.07 or less are confused; those at 0.25 or more are not. The threshold
+    lies somewhere between [TBD].
+  - For the method this is a partial success. With no pairing and no truth, grid video was
+    decoded to the right world up to one barely broken exchange of object words: 32% of frames
+    are exact once that exchange is allowed for.
+  - One pair can't say whether the truth lost by noise or by bias. It is under two fit-noise
+    gaps behind. Across pairs, the proposal counts such confusions like a swap rate.
+
+**86. With nothing hand-written and no hints, the state-vector search selects the true reading in the lured world, and the wrong readings lose in order of how strongly the world breaks them.**
+- *Why:* entry 82's search, which stalled in the pilot world, rerun in the lured world (entry 84).
+  In the pilot world state vectors got every object word right and failed only on the places'
+  mirror (entry 71).
+- *How:*
+  - `pilot-lured` pair 0, with `configs/pilot-decipher-stats-split.yaml`, unchanged, on the
+    faster code with the split step's memory released (entries 82-83). There were 8 finalists;
+    it took 4 hours 7 minutes.
+  - Each finalist took about 30 minutes, against 1-2 hours in entry 82. GPU memory stayed at
+    about 6 GB, with no spill.
+  - Monitoring only (uses hidden/): each finalist was scored from its saved frames as it
+    finished, and named with the hidden key.
+- *Result:*
+
+  | Finalist | Reading | Violation rate (lured) | Selection | Exact frames |
+  |---|---|---|---|---|
+  | 1, **selected** | **the true reading**, agents swapped | 0 | **20.37** | **68.1%** |
+  | 2 | the true reading | 0 | 20.05 | 64.0% |
+  | 7 | the places' mirror (river-hill, bush-cave) | 0.249 | 19.75 | 0% |
+  | 8 | the same, agents swapped | 0.249 | 19.70 | 0% |
+  | 6 | river and hill exchanged, agents swapped | 0.448 | 19.32 | 2.8% |
+  | 5 | river and hill exchanged | 0.448 | 19.20 | 2.5% |
+  | 3 | bush and cave exchanged | 0.510 | 19.08 | 4.2% |
+  | 4 | bush and cave exchanged, agents swapped | 0.510 | 18.88 | 2.8% |
+
+  - Official score (`analysis/score-decipher-stats-split.json`): 68.1% of held-out frames exactly
+    right up to the agent swap, against 0.06% for the same frames shuffled.
+  - The selected reading has the agents swapped: 6.0% exact as numbered, 68.0% under the swap.
+  - Places are read at 95-97% by the unswapped twin, hunger at 97%, and the objects at
+    90-92% (72-82% for the selected fit).
+  - The two true readings differ only by the exact agent swap and score 0.32 apart. That gap is
+    fit-to-fit noise; on grid video it was 0.26 (entry 85).
+- *Meaning:*
+  - **The first full success with nothing hand-written.** Both streams' structure comes from their
+    own statistics, the matching is searched with no pairing, and the selection uses no truth;
+    the result is 68% of frames exactly right. The pilot's hand-written method averaged 59.6%
+    across three pairs (entry 55), and 64.7% on its pair 0.
+  - **The losses are graded.** Each wrong reading's gap to the truth grows with its violation rate:
+    0.6 for the mirror (0.25), about 1.1 for river-hill (0.45) and about 1.4 for bush-cave
+    (0.51). In the pilot world the mirror's rate was 0.07, and it won (entry 71). Together with
+    entry 85, readings the world breaks at 0.07 or less are chosen or tie, and the selection
+    margin grows with the violation rate above that. This is H3's graded prediction, seen inside
+    one pair's selection (a tuning pair, so not evidence yet).
+  - State vectors resolve the objects that grid video confused (entry 85). The lists of facts give
+    the fit cleaner evidence about who holds what.
+  - **Next: confirmation on fresh pairs.** The method is frozen as it ran here (below), and runs
+    once on `pilot-lured` pairs 1 and 2, then on grid pair 1.
+- *Frozen method for the confirmation:*
+  - Research repo at commit 8ff3381, plus the lured world (`sim/worlds.py`, `runs/conditions.py`).
+  - Search code: the `feat/perf` worktree at commit 2a83c36 plus its uncommitted changes, saved
+    as `runs/pilot-lured/method-frozen.patch` (sha256 starting 128f9ba35a05b21c).
+  - Config: `configs/pilot-decipher-stats-split.yaml` for state vectors, and
+    `configs/pilot-grid-decipher-split.yaml` for grid video. No setting changes.
+
+**87. Confirmation on fresh pairs: the frozen method selects the true reading on lured pair 1 (state vectors, 62.9% of frames exactly right).**
+- *Why:* entry 86's result came from a tuning pair. This is the test, with the method frozen as
+  entry 86 records, run once on pairs never used before. Nothing was looked at against the truth
+  until each search had made its choice.
+- *How:* `pilot-lured` pairs 1 and 2 got new language and frame models (held-out losses match
+  pair 0's), then one search each with `configs/pilot-decipher-stats-split.yaml`, then the
+  official score. Grid pair 1 follows (entry 88).
+- *Result, pair 1* (search 3 hours 56 minutes, 8 finalists):
+  - **Selected: the true reading. 62.9% of held-out frames exactly right**, against 0.03% for
+    the same frames shuffled. Its agent order matches the key: 62.8% as numbered.
+  - Places 96-97%, hunger 97%, glass, stone and apple 89-91%.
+  - Finalist scores (selection, and exact frames scored afterwards): truth 19.34 (62.9%); its
+    agent-swapped twin 19.27 (51.0%); then 18.72 and 18.62 (0%); 18.04, 18.01, 17.78 and
+    17.64 (0.6-3.2%). The truth's twin is the only reading within 0.6.
+- *Result, pair 2:* [TBD]
+- *Meaning so far:* the method generalises to a fresh pair, run once, with nothing hand-written
+  and no truth used. Pair 0 gave 68.1% and pair 1 gives 62.9%.
