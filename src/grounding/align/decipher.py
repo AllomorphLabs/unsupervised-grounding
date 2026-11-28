@@ -74,6 +74,15 @@ class DecipherConfig:
     # sentence: the language tells one world step as several sentences ("A goes to the river. A is
     # hungry."), and every change of the step shows in the frame at once (entry 95).
     recent_change: bool = False
+    # Which paths the summary model is fitted to each iteration: the filter's own ("posterior"),
+    # drawn with the summary model's help, or a second set drawn from the words alone ("words"),
+    # so a wrong summary model can't steer the paths that confirm it (entry 102).
+    summary_paths: str = "posterior"
+    # Split moves are kept or rejected by the method's own fit (words and summaries together,
+    # on the first fit batch, fixed draws) instead of by the summaries' likelihood alone: on
+    # both grid pairs that fit prefers the true-frame summary model, and the summaries alone
+    # don't (entry 102).
+    split_judge: bool = False
     iterations: int = 12
     own_prior: float = 20.0  # pseudo-counts on each value's own entity words, to start
     # Pseudo-counts tying each other word to the changes that happen about as often as it is said,
@@ -938,6 +947,17 @@ class Fit:
                 )
             paths, ll = self.run(batches, seed=it + 1000 * self.D.cfg.seed)
             self.update(paths, it)
+            if cfg_.summary_paths == "words" and self.gauss is not None:
+                words_only, _ = self.run(
+                    batches, seed=it + 1000 * self.D.cfg.seed + 500_000, use_summary=False
+                )
+                X, Y = [], []
+                for _tok, _prev, cur, _m, _actw, z in self._items(words_only):
+                    if z is not None:
+                        X.append(self.D.view(cur))
+                        Y.append(z)
+                del words_only
+                self.gauss = Gauss.fit(torch.cat(X), torch.cat(Y), pairs=self.D.pairs)
             log(
                 f"    iteration {it + 1}/{self.D.cfg.iterations}: "
                 f"fit {ll:.4f} ({time.time() - t0:.0f}s)"
@@ -996,11 +1016,26 @@ class Fit:
             rounds=cfg.split_rounds,
             together=together,
             orders=cfg.split_orders,
+            judge=self._judge(batches) if cfg.split_judge else None,
             log=log,
         ).gauss
         fine = torch.isfinite(out.Wb).all() and torch.isfinite(out.A).all()
         if fine and torch.isfinite(out.norm):
             self.gauss = out
+
+    def _judge(self, batches: list[Batch]):
+        """The method's own fit of a summary model: the filter's mean log-likelihood on the
+        first fit batch, with the same draws every time so models are compared fairly."""
+
+        def judge(g) -> float:
+            keep = self.gauss
+            self.gauss = g
+            try:
+                return self.run(batches[:1], seed=424242)[1]
+            finally:
+                self.gauss = keep
+
+        return judge
 
     @torch.no_grad()
     def decode(self, batches: list[Batch], seed: int | None = None):
