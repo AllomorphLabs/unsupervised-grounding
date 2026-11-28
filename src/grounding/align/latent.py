@@ -163,6 +163,7 @@ def split_moves(
     together: list[tuple[int, int]] | None = None,
     orders: int = 1,
     extra: list[int] | None = None,
+    judge=None,
     log=print,
 ) -> LatentFit:
     """Escape "no effect" for facts whose effect on the summaries is near zero.
@@ -183,9 +184,16 @@ def split_moves(
     then shuffled), keeping the fit of highest likelihood.
 
     ``extra``: facts tried as well as the weak ones, whatever their effect size. A fact can have an
-    effect of the right size pointing the wrong way, and is then never weak (entry 92)."""
+    effect of the right size pointing the wrong way, and is then never weak (entry 92).
+
+    ``judge``: a function scoring a summary model by another objective (higher is better). If
+    given, every move is kept or rejected by it instead of by the summaries' likelihood, and
+    the moves start from ``start`` itself (entry 102)."""
     best = fit_latent(z, views, prior, iterations=iterations, restarts=1, init=start, jitter=0.0)
     log(f"  split moves: start loglik {best.loglik:.4f}")
+    if judge is not None:
+        best = LatentFit(start, judge(start), 0)
+        log(f"  judged start: {best.loglik:.4f}")
     norms = best.gauss.Wb[:-1].norm(dim=1)
     log("  effect sizes: " + " ".join(f"{float(x):.2f}" for x in norms))
     if dims is None and weakest:
@@ -209,7 +217,18 @@ def split_moves(
         if orders > 1:
             log(f"  order {o + 1}/{orders}: {order}")
         fit = _rounds(
-            z, views, prior, first, norms, order, directions, iterations, rounds, together, log
+            z,
+            views,
+            prior,
+            first,
+            norms,
+            order,
+            directions,
+            iterations,
+            rounds,
+            together,
+            log,
+            judge,
         )
         if o == 0 or fit.loglik > best.loglik:
             best = fit
@@ -218,13 +237,15 @@ def split_moves(
     return best
 
 
-def _rounds(z, views, prior, best, norms, dims, directions, iterations, rounds, together, log):
+def _rounds(
+    z, views, prior, best, norms, dims, directions, iterations, rounds, together, log, judge=None
+):
     """Up to ``rounds`` passes of split moves over ``dims`` (then joint moves on ``together``),
     stopping when a pass gains nothing."""
     for r in range(rounds):
         before = best.loglik
         cut = max((float(norms[j]) for j in dims), default=0.0) + 1e-6
-        best = _split_round(z, views, prior, best, dims, directions, iterations, log)
+        best = _split_round(z, views, prior, best, dims, directions, iterations, log, judge)
         if together:
             # Pairs whose facts both stayed as weak as the weak facts were before this round.
             now = best.gauss.Wb[:-1].norm(dim=1)
@@ -233,7 +254,9 @@ def _rounds(z, views, prior, best, norms, dims, directions, iterations, rounds, 
                 for a, b in together
                 if a in dims and b in dims and max(float(now[a]), float(now[b])) <= cut
             ]
-            best = _joint_round(z, views, prior, best, pairs, min(directions, 3), iterations, log)
+            best = _joint_round(
+                z, views, prior, best, pairs, min(directions, 3), iterations, log, judge
+            )
         norms = best.gauss.Wb[:-1].norm(dim=1)
         if best.loglik <= before + 1e-4:
             break
@@ -248,7 +271,7 @@ def _noise_directions(g: Gauss, n: int) -> torch.Tensor:
     return (vecs[:, -n:].T * vals[-n:, None].sqrt()).flip(0)
 
 
-def _try(z, views, prior, best: LatentFit, moves, iterations) -> LatentFit | None:
+def _try(z, views, prior, best: LatentFit, moves, iterations, judge=None) -> LatentFit | None:
     """Restart the facts in ``moves`` ({fact: effect}) and refit; the result if better."""
     Wb = best.gauss.Wb.clone()
     for j, w in moves.items():
@@ -267,23 +290,27 @@ def _try(z, views, prior, best: LatentFit, moves, iterations) -> LatentFit | Non
     ok = np.isfinite(trial.loglik) and bool(
         torch.isfinite(trial.gauss.Wb).all() and torch.isfinite(trial.gauss.A).all()
     )
+    if ok and judge is not None:
+        trial = LatentFit(trial.gauss, judge(trial.gauss), trial.iterations)
     return trial if ok and trial.loglik > best.loglik + 1e-4 else None
 
 
-def _split_round(z, views, prior, best: LatentFit, dims, directions, iterations, log) -> LatentFit:
+def _split_round(
+    z, views, prior, best: LatentFit, dims, directions, iterations, log, judge=None
+) -> LatentFit:
     """One pass of split moves over ``dims``, each from the best fit so far."""
     for j in dims:
         improved = False
         for v in _noise_directions(best.gauss, directions):
             for sign in (1.0, -1.0):
-                trial = _try(z, views, prior, best, {j: sign * 2 * v}, iterations)
+                trial = _try(z, views, prior, best, {j: sign * 2 * v}, iterations, judge)
                 if trial is not None:
                     best, improved = trial, True
         log(f"  fact {j}: {'improved to ' + format(best.loglik, '.4f') if improved else 'no gain'}")
     return best
 
 
-def _joint_round(z, views, prior, best: LatentFit, pairs, directions, iterations, log):
+def _joint_round(z, views, prior, best: LatentFit, pairs, directions, iterations, log, judge=None):
     """Joint split moves: each pair of facts restarted along two different noise directions,
     every order and sign, from the best fit so far."""
     for a, b in pairs:
@@ -292,7 +319,7 @@ def _joint_round(z, views, prior, best: LatentFit, pairs, directions, iterations
         for i, k in itertools.permutations(range(len(top)), 2):
             for sa, sb in itertools.product((1.0, -1.0), repeat=2):
                 moves = {a: sa * 2 * top[i], b: sb * 2 * top[k]}
-                trial = _try(z, views, prior, best, moves, iterations)
+                trial = _try(z, views, prior, best, moves, iterations, judge)
                 if trial is not None:
                     best, improved = trial, True
         log(

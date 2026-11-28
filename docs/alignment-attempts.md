@@ -20,9 +20,9 @@ taught us.
 
 ## Where we are now
 
-*(Updated as the work moves on. Last updated after experiment 100.)*
+*(Updated as the work moves on. Last updated after experiment 106.)*
 
-**Phase 3, grid video and state vectors with nothing hand-written (entries 56-100).**
+**Phase 3, grid video and state vectors with nothing hand-written (entries 56-106).**
 - Both observation formats find their structure from their own statistics, and the words'
   kinds come from the language alone; the search leaves the agents' order free.
 - **Hunger on grid video is solved under the true matching** (entries 69-76): split moves teach
@@ -39,7 +39,7 @@ taught us.
   worlds the confusions follow the violation rate,** as H3 predicts.
 - **Speed:** a faster filter, a cached context and a CUDA-graph frame sampler reproduce the
   current code exactly on the GPU (entry 83). With them a grid search takes about 4 hours,
-  against 8. They are on the `feat/perf` branch, not yet merged.
+  against 8. Merged, and on by default (entry 91).
 - **Tuning pairs:** pilot pairs 0-2, grid pair 0 and the lured pairs 0 have been used to make
   choices while looking at the truth, so they can't confirm the method (technical decision 24).
 - **State vectors in the lured world: the first full success** (entry 86). With nothing
@@ -50,27 +50,51 @@ taught us.
   1 and 2, at 62.9% and 64.0% exact (mean over three pairs 65.0%).
 - **Grid video on fresh pair 1** (entry 88): the true matching selected, but with hunger read
   poorly (71-73%), so only 13% of frames are exact.
-- **Grid video's gap is in the alignment, not the watcher** (entries 89-94). The grid world model
-  proposes next moments as well as the state-vector one, and the parsed structure is exact. On
-  pair 1 the fit never links the word "hungry" to the hunger change. More data, other settings,
-  restarts, retrying appearances and hints for verbs each fixed one thing and broke another.
-- **The objective is sound; a blank-start fit is trapped** (entries 95-98). Started from the
-  truth, the fit reaches the method's best score and decodes 54% exact on pair 1 (entry 96).
-  From a blank start, every change tried so far settles on a worse picture: more candidates and
-  edit proposals (94), the narration mismatch (96), how the summary model first forms (97), and
-  four times the particles (98). More particles gave the best blank-start fit yet by iteration
-  12, but it decoded only 8%: the trap isn't a shortage of distinct guesses.
-- **Speed** (entry 91): the sampler graph and the cached context, both exact, are now on by
-  default. The filter is about twice as fast.
-- **Grid video redrawn from its facts** (entries 99-100). Each frame is redrawn from the facts
-  its own parser finds, so a world state has one drawing, and the world model and the filter work
-  on that. From a blank start, under the true matching on pair 1, this decodes 44.3% exact, and
-  50.1% once the split moves also retry every appearance: both agents' hunger at 97%, against
-  4.9-25.3% for every blank start on the original frames. Proposal edit 11 is drafted for review.
-- **Running:** the frozen search (`configs/pilot-grid-facts-decipher.yaml`) on fresh grid pair
-  2's facts copy, about 9-10 hours. Grid pairs 3-4 stay fresh. [TBD]
-- **Checkpoints:** fits can now save what they have learned after every iteration and resume
-  from any of them with changed settings (entry 98), so a test no longer has to start again.
+- **Grid video's gap is in the alignment, not the watcher** (entries 89-98). The grid world model
+  proposes next moments as well as the state-vector one, and the parsed structure is exact. Started
+  from the truth, the fit reaches the method's best score (entry 96), but every blank start was
+  trapped, and more particles didn't help (entry 98).
+
+**Grid video, current state (entries 99-106).** All numbers are under the true matching, on the
+tuning pairs, grid pairs 1 and 2 (lured world). Grid pair 3 is fresh (its facts copy and world model
+exist; a search was started and stopped unread), grid pair 4 too (its language model isn't
+trained).
+
+| Step | Pair 1 | Pair 2 | Entry |
+|---|---|---|---|
+| Original frames, best blank start | 25.3% | not run | 96 |
+| **Frames redrawn from their facts** (`units.canonical_frames`, `runs/queue/make_facts_pair.py`) | 44.3% | 11.8% | 99, 101 |
+| **+ narration fix** (`recent_change`) | 71.0-72.6% | 30.6% | 103 |
+| **+ exact inference per object at decoding** (`runs/queue/object_smooth2.py`) | **78.7%** | **43.9%** | 106 |
+| + `edit_proposals`, then 3 rounds training on exact object histories (`smoothed_em.py`) | not run | **47.7%** (8 rounds running) | 106 |
+| Ceiling: model fitted to the true frames | about 89% | 79-87% | 101, 104 |
+
+- *What works and why:* (1) redrawing removes the random cell within a patch, so one world state
+  has one drawing; (2) `recent_change` lets a sentence report the most recent move's changes, as
+  the language tells one world step in several sentences; (3) exact forward-backward per object,
+  given the rest of the decoded frame, fixes the particle filter's forward-only guessing (at a drop
+  it often handed the stone to the other agent).
+- *Diagnosis tools:* `runs/queue/hunger_halves.py` swaps in word tables or a summary model fitted to
+  the true frames; on both pairs the summary model is the bottleneck (entry 101), and the method's
+  own fit prefers the true-frame summary model (entry 102), so the objective points the right way.
+- *Still wrong on pair 2:* agent B's hunger (75%) unless `edit_proposals` is on (97%), but
+  `edit_proposals` broke pair 1 (8.8%, entry 105); and the glass falls (87% to 73%) as training on
+  exact object histories raises the stone.
+- *Tried and dropped* (entries 100-106): `split_looks` with `recent_change`, `summary_paths: words`,
+  `split_judge`, `summary_soft`, refits of the summary model on the summaries alone (that objective
+  prefers wrong models), swap, reordering, carrier and random-search moves, restarting one thing.
+- *Frozen config so far:* `configs/pilot-grid-facts-recent.yaml` (grid search plus
+  `recent_change`, on a facts copy). It does not yet include exact object inference, which exists
+  only in `runs/queue/` scripts and must move into `src/grounding/align/` (with tests) before any
+  confirmation search.
+- *Next:* (1) finish the 8-round run; (2) put exact per-object inference into the fit and decode
+  as a method option, keep its world-model step on the learned frame model (not counted
+  transitions, which are a control); (3) the glass's fall and agent B's hunger; (4) confirm on
+  both tuning pairs, then once on fresh grid pair 3 with a frozen config. Proposal edit 11 (redrawn
+  frames) and a new edit for exact object inference await Shane's review.
+- **Checkpoints:** refits save what they have learned after every iteration (and before the split
+  moves) and resume from any of them with changed settings (`FIT_RESUME`, entry 98), so most tests
+  take minutes, not hours.
 
 **The pilot (entries 1-55).** The state of the pilot when it ended:
 
@@ -2709,7 +2733,217 @@ step that sorts frame values and words into kinds, and the search that fixed the
     grid pair 2's facts copy, followed by its scoring. The 6-weakest and second-seed tests on pair
     1 run after it.
   - Pair 2's search runs the slower split moves for each of its 6 finalists, so it takes about
-    9-10 hours instead of 4. [TBD]
+    9-10 hours instead of 4. It was stopped after 3 finalists (entry 101).
   - The gate of entry 99 recorded a fail at 44.3% (`runs/queue/FACTS-GATE-FAILED`); this entry's
     test supersedes it.
+
+**101. On fresh pair 2 the redrawn frames decode 12% under the true matching; swapping in a summary model fitted to the true frames gives 72-84% on both pairs, so the summary model is what fails.**
+- *Pair 2's search, stopped after 3 of 6 finalists.* Each finalist's decoding was scored as it
+  finished, on the CPU, using hidden/ (`runs/queue/score_finalists_live.py`); nothing fed back
+  into the search. Each finalist was the truth with one pair of near-symmetric words exchanged:
+
+  | Pair 2 finalist | Differs from the truth by | Selection | Exact |
+  |---|---|---|---|
+  | 1 | glass and apple | 50.94 | 0.5% |
+  | 2 | river and hill (the places' mirror) | 48.62 | 0.4% |
+  | 3 | stone and apple | 51.76 | 4.7% (22.5% with the swap undone) |
+
+  The search was stopped with Shane's agreement: its method was set to change, and a fit under
+  the true matching answers the same question in a quarter of the time.
+- *Pair 2 under the true matching* (`runs/queue/grid-facts.yaml`, seed 0): 11.8% exact, hunger
+  74-77% for both agents, stone and apple 50-51%, selection score 51.21 (below finalist 3's
+  51.76, which also had `split_looks`).
+- *Which half fails* (`runs/queue/hunger_halves.py`): each fit decoded as saved, with the word
+  tables or the summary model replaced by ones fitted to the true frames (redrawn as the pair's
+  are), and with the true-frame model itself.
+
+  | Swapped in | Pair 1 (entry 99 fit) | Pair 2 |
+  |---|---|---|
+  | Nothing | 45.8% | 11.8% |
+  | True-frame word tables | 57.4% | 34.5% |
+  | **True-frame summary model** | **84.1%** | **72.1%** |
+  | True-frame model (both) | 89.0% | 87.3% |
+
+  - With the true-frame summary model, both agents' hunger is read at 96-97% on both pairs, and
+    pair 2's stone and apple at 93-94%, with the fit's own word tables.
+  - The true word tables fix pair 2's stone and apple (82% and 80%) but not hunger.
+- *Meaning:*
+  - The summary model is the bottleneck on both pairs. With a good one, the rest of the grid
+    method as it stands decodes 72-84%, above the state vectors' 63-68%; both pairs' ceiling is
+    about 88%. Pair 2's poor result is a worse summary model, not a harder pair.
+  - Next: learn the summary model better without the truth (entry 102).
+
+**102. The method's own fit prefers the true-frame summary model on both grid pairs, but three ways of reaching it fail.**
+- *Why:* entry 101 found the summary model to be the bottleneck. Each test here is short: it
+  resumes a saved fit (entry 98) or decodes a changed copy of it, on the facts copies of pairs 1
+  and 2 under the true matching.
+- *Does the objective point the right way?* (`runs/queue/halves_score.py`) The method's own fit on
+  the selection episodes, for the fit as saved and with the true-frame summary model swapped in:
+  pair 1 52.91 against 53.78, pair 2 51.27 against 53.46. Yes: the method's objective prefers the
+  true-frame summary model, and the fit doesn't reach it.
+- *Tried, and failed:*
+  - Refining the whole summary model on the summaries alone (`runs/queue/summary_refine.py`):
+    pair 1 falls from 45.8% to 29.2% (10 EM iterations) and 27.5% (40). By the summaries' own
+    likelihood the refined models score 112.6-112.7, the true-frame model only 110.6: that
+    objective prefers a model that isn't the truth.
+  - Fitting the summary model to paths drawn from the words alone (`summary_paths: words`, a new
+    option, off by default; 4 more iterations from iteration 16): pair 2 falls from 11.8% to 4.7%.
+  - Split moves judged by the method's own fit (`split_judge`, a new option, off by default; with
+    every appearance retried): on pair 2 none of the first 7 facts tried was kept, and the test
+    was stopped. Each move is refitted on the summaries alone before it is judged, which pulls it
+    back towards that objective's preferred model.
+  - Swap moves (`runs/queue/swap_moves.py`): exchanging the summary model's rows for a thing's two
+    appearances, two things' appearances, or the two agents', judged by the method's fit. Every
+    swap scores below the fit as saved (47.5-51.6 against 51.65) and decodes worse or the same
+    (0.6-10.5%). The fit's hunger effects belong to the right agent and point the right way; they
+    are too weak.
+- *Meaning:* the summary model's hunger effects are weak, not wrong, and changing the summary
+  model directly doesn't fix them. The likely cause is upstream, in the paths it is fitted to:
+  the language tells one world step in several sentences, so a "hungry" sentence comes after the
+  frame in which hunger changed (entry 95), and the word model can't link the word to the change.
+  That also explains why the true-frame word tables, fitted under the same word model, didn't fix
+  hunger (entry 101). Next: `recent_change` (entry 96) on the facts copies, where the trap no
+  longer swamps it (entry 103).
+
+**103. On the redrawn frames, letting a sentence report the most recent move's changes lifts pair 1 to 71% exact and pair 2 to 31%.**
+- *Why:* entry 102 traced weak hunger to the narration: the language tells one world step in
+  several sentences, so "A is hungry" comes after the frame in which A became hungry, and the word
+  model can't link the word to the change. `recent_change` (entry 96) lets a staying sentence
+  report any change of the most recent move. On the original frames the trap swamped it.
+- *How:* `runs/queue/grid-facts-recent.yaml`, the usual settings with `recent_change: true`, from a
+  blank start under the true matching, on both pairs' facts copies (pair 1 seed 1 and pair 2 seed
+  0, as in entries 99 and 101).
+- *Result:*
+
+  | True matching, redrawn frames | Fit | Select | Exact | A place | B place | A hungry | B hungry | Glass | Stone | Apple |
+  |---|---|---|---|---|---|---|---|---|---|---|
+  | Pair 1, usual (entry 99) | 52.90 | 52.97 | 44.3% | 96% | 98% | 97% | 73% | 93% | 80% | 89% |
+  | **Pair 1, recent change** | **53.47** | **53.19** | **71.0%** | 96% | 98% | 97% | **97%** | 92% | 92% | 94% |
+  | Pair 2, usual (entry 101) | 51.55 | 51.21 | 11.8% | 94% | 97% | 77% | 74% | 79% | 50% | 51% |
+  | **Pair 2, recent change** | **51.94** | **51.79** | **30.6%** | 94% | 98% | **97%** | 75% | 87% | 54% | **94%** |
+
+  - Pair 1's fit is the highest of any pair 1 grid fit, above the start from the truth on the
+    original frames (52.91), and its split moves reach 114.24 without retrying every appearance.
+  - On pair 2 the selection score (51.79) now edges past the stone-and-apple-swapped finalist of
+    entry 101 (51.76, with `split_looks`).
+  - Pair 2 still has one agent's hunger stuck (B, 75%) and the stone muddled (54%).
+- *Meaning:* the narration mismatch was a real cause of weak hunger. With it fixed, pair 1 decodes
+  above the state vectors (63-68%) and within 18 points of its ceiling (89%, entry 101). Pair 2's
+  remaining errors are entry 104.
+
+**104. Pair 2's last errors (one agent's hunger, the stone) are systematic, and sit in the summary model.**
+- *Why:* with the narration fix (entry 103), pair 2 decodes 30.6%: agent B stays "hungry" after
+  eating, and the stone is muddled.
+- *Tests,* each on pair 2's facts copy under the true matching, with `recent_change`:
+
+  | Change | Split likelihood | Fit | Select | Exact | B hungry | Stone |
+  |---|---|---|---|---|---|---|
+  | None (entry 103, seed 0) | 112.39 | 51.94 | 51.79 | 30.6% | 75% | 54% |
+  | `split_looks`, one order, resumed before the split moves | 113.75 | 51.55 | 51.34 | 24.9% | 68% | 53% |
+  | 8 more iterations | | 52.43 | 51.83 | 30.7% | 75% | 55% |
+  | Seed 1 | 113.39 | 52.41 | 51.82 | 30.7% | 75% | 55% |
+  | `edit_proposals`, 8 more iterations | | 52.65 | 52.29 | 32.1% | 75% | 55% |
+
+  - `split_looks` raised the summaries' likelihood most and decoded worst (agent A's hunger fell
+    to 70%), while the method's own selection score ranked it lowest: the summaries' likelihood
+    misleads again (entry 102), and the method's score doesn't.
+  - Agent B is decoded hungry 51% of the time it isn't (agent A 0.7%), as on pair 1 before the
+    narration fix (entry 99).
+- *Which half* (`runs/queue/hunger_halves.py`, under `recent_change`): as saved 30.6%; true-frame
+  word tables 47.1% (stone 77%, B's hunger 76%); **true-frame summary model 73.3%** (B's hunger 97%,
+  stone 91%); true-frame model 78.7%. The summary model still holds most of the gap. Its effect for
+  B's appearances is as large as A's (rows' difference 3.55 against 2.88), so it is the wrong
+  effect, not a missing one.
+- *Next:* `edit_proposals` from the start, as in entry 94, where it was the one change that read
+  agent B's hunger at 97% on the original frames (entry 105).
+
+**105. Weighing every appearance change from the start fixes pair 2's hunger; its stone stays muddled, and no quick fix reaches it.**
+- *Edit proposals from the start* (`runs/queue/grid-facts-recent-edits16.yaml`: `recent_change` and
+  `edit_proposals`, pair 2 seed 0, true matching): fit 52.83, selection 52.72 (both the best on pair
+  2), exact 28.6%. Both agents' hunger 97%, glass 86%, apple 94%, but the stone 38% (54% without
+  edit proposals). Everything but the stone reads at 86-97%.
+- *Where the stone goes:* when it lies at a place, it is decoded at another place 42% of the time.
+  It is not a timing slip (0.5% of those are where the stone was up to 3 sentences before or after),
+  and an agent is there no more often than chance (43%). The errors spread over places rather than
+  making a clean relabelling.
+- *The stone's rows of the summary model* (`runs/queue/noise_dirs.py`): every other thing's place
+  rows match the true-frame model's (cosine 0.89-1.00); the stone's are half the size and point
+  elsewhere (cosine -0.08 to +0.82). The true rows lie almost wholly in the fit's left-over noise
+  (70-85% in its top 4 directions, 98-99% in its top 8).
+- *Tried, all with no lasting gain:*
+  - Reordering a thing's place rows, in the summary model (`place_perms.py`) or in the word tables
+    and summary model together (`place_perms_all.py`), judged by the method's fit: the stone's best
+    reordering scores just below the fit as saved (53.22-53.26 against 53.34) and decodes the
+    stone at 39%.
+  - Split moves on the stone's place facts, each judged after one round of the real fit
+    (`em_moves.py`): 32.5% exact, stone 42%.
+  - Refitting the stone's four rows jointly on the summaries alone, the rest fixed
+    (`restricted_em.py`): from the fit's rows or from zero, both reach the same optimum (111.06)
+    and decode the stone at 36-39%. Even restricted to these rows, the summaries alone prefer the
+    wrong ones.
+  - A random search on the stone's rows within the top 8 noise directions, judged by the method's
+    fit (`stone_search.py`): no improvement in 20 steps; stopped. The true rows are too far from the
+    fit's for a local search.
+- *Meaning:* with the redrawn frames, the narration fix and edit proposals, both pairs read
+  everything well except pair 2's stone. Pair 1 shows the method can read the stone (92%).
+- *The check on pair 1* (`recent_change` and `edit_proposals`, seed 1, true matching): fit 50.79,
+  selection 50.45, **8.8% exact**. Agent A's place 33% and both agents' hunger about 72%: the fit
+  fell apart after the split moves (52.47 at iteration 12). The gate (`runs/queue/final_gate.py`,
+  bar 60%) failed and queued nothing.
+
+  | True matching, redrawn frames | Pair 1 | Pair 2 |
+  |---|---|---|
+  | `recent_change` alone (entry 103) | **71.0%** | **30.6%** |
+  | `recent_change` and `edit_proposals` | 8.8% | 28.6% |
+
+- *Frozen:* `recent_change` alone is better on both pairs, so `edit_proposals` is dropped. The
+  frozen settings are `configs/pilot-grid-facts-recent.yaml`: the grid search's config plus
+  `recent_change`, run on a pair's facts copy, the same as tested in entry 103. They run once, as
+  a full search, on fresh grid pair 3's facts copy (built and checked: 145,208 distinct frames in
+  the first 200,000 become 20,846). [TBD]
+
+**106. Exact inference for each object, given the rest of the decoded frame, fixes most of the stone: pair 1 79% exact, pair 2 44-48%.**
+- *Why:* with Shane, fix the stone on pairs 1 and 2 before confirming on a fresh pair (grid pair 3's
+  search was stopped before anything was read, so it stays fresh).
+- *Tried and failed* (pair 2, true matching, `recent_change`):
+  - `summary_soft` (a new option, off by default): the summary model fitted to each sentence's
+    view averaged over all particles (regression calibration), from a blank start: 20.6% exact,
+    stone 46%.
+  - Restarting the thing with the weakest place effects inside the fitted model
+    (`runs/queue/object_restart.py`; it picks the stone from the fit alone), 6 more rounds, 2
+    starts: 10.1-10.3%, stone 17-20%, and a lower fit; the unchanged fit 30.8%.
+  - Swapping an object's two carrier facts (`carrier_swaps.py`): worse for every object.
+- *What the stone's errors are* (`runs/queue/` scratch diagnostics on the saved decode): the decoded
+  stone never jumps between places while lying (0 of 10,852), so the decode isn't stitched
+  inconsistently. Errors are worst after a drop (76-81% wrong, against 36-40% while lying since
+  the start): at a true drop the decode has the stone still in the dropper's hands 50% of the time,
+  and one sentence later in the other agent's hands 42% of the time. The filter, reading forwards
+  and weighing only what the world model samples, rarely has "the stone lying at the dropper's
+  place" among its candidates.
+- *Exact inference per object* (`runs/queue/object_smooth2.py`, `smoothlib.py`): the fit's decode
+  gives every frame; for each object (a thing two others can carry, found from the parse), its
+  whole history is re-inferred by forward-backward over its states (each value it can be drawn
+  in), weighing at every sentence and every pair of states the word tables, the learned world
+  model's probability of the change (one frame of context), the stay probability, the summary
+  model and validity. The same for each thing's appearance. Decoding only; the fit is unchanged.
+
+  | True matching, `recent_change` | As decoded | Exact objects | Stone | Glass | Apple | B hungry |
+  |---|---|---|---|---|---|---|
+  | Pair 1 | 72.6% | **78.7%** | 92% to 99.5% | 92% to 90% | 95% to 99.8% | 97% |
+  | Pair 2 | 30.6% | **43.9%** | 54% to 76% | 87% | 94% to 99.4% | 75% |
+  | Pair 2, with `edit_proposals` | 28.6% | 39.3% | 38% to 51% | 86% to 85% | 94% to 99.9% | 97% |
+
+  Appearances barely change (agent B's hunger on pair 2 75.0%): exact inference can't fix an
+  effect the summary model has wrong.
+- *Inside the fit* (`runs/queue/smoothed_em.py`): each extra round runs the filter, re-infers each
+  episode's objects exactly, and gives that path to the usual update; then decodes with exact
+  objects.
+  - From pair 2's `recent_change` fit, 3 rounds: 44.2% to 43.6% (stone 76% to 85%, glass 87% to
+    79%); the method's fit falls (52.21 to 50.56).
+  - From pair 2's `edit_proposals` fit, 3 rounds: 39.3%, 42.5%, 45.1%, **47.7%** (stone 51% to 76%,
+    both agents' hunger 97%, glass 85% to 73%); the method's fit stays about 53.2. As decoded,
+    without exact objects, 28.6% to 42.9%.
+- *Meaning:* the stone's error came from the filter, not the model: given the same model, exact
+  inference reads it far better, and training on its histories improves the model itself. The
+  glass falling as the stone rises is the next problem. 8 rounds are running. [TBD]
 
