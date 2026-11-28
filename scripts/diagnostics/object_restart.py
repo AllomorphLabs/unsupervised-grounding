@@ -6,7 +6,8 @@ rows go back to the background word frequencies. The real fit then continues for
 from a few starting seeds. The unchanged fit gets the same rounds, so the comparison is fair. Each
 is judged by the method's own fit (first fit batch, fixed draws) and decoded.
 
-    GRID_CFG=<config> uv run python runs/queue/object_restart.py <facts pair> <checkpoint> [rounds] [starts]
+    GRID_CFG=<config> uv run python scripts/diagnostics/object_restart.py <facts pair> \
+        <checkpoint> [rounds] [starts]
 """
 
 import copy
@@ -51,8 +52,11 @@ size = {k: float((W[js] - W[js].mean(0)).norm(dim=1).mean()) for k, js in at.ite
 weakest = min(size, key=size.get)
 mine = [j for j, u in enumerate(units) if u[0] in ("at", "looks", "gone") and u[1] == weakest]
 mine += [j for j, u in enumerate(units) if u[0] == "with" and weakest in u[1:]]
-print(f"RESTART place-effect sizes {json.dumps({k: round(v, 2) for k, v in size.items()})}; "
-      f"restarting thing {weakest} ({len(mine)} facts)", flush=True)
+print(
+    f"RESTART place-effect sizes {json.dumps({k: round(v, 2) for k, v in size.items()})}; "
+    f"restarting thing {weakest} ({len(mine)} facts)",
+    flush=True,
+)
 
 
 def wiped(st, seed):
@@ -90,8 +94,11 @@ def report(label, f):
     pred = np.stack([state_to_array(decode(world, x, key)) for x in frames])
     r = score_predictions(world, group, pred, lang_truth(data, positions))
     comp = {k: round(v, 3) for k, v in r["components"].items()}
-    print(f"RESTART {label:24s} judge {judge:.4f} exact {r['modulo_symmetry']:.3f} {json.dumps(comp)}",
-          flush=True)
+    print(
+        f"RESTART {label:24s} judge {judge:.4f} exact {r['modulo_symmetry']:.3f} "
+        f"{json.dumps(comp)}",
+        flush=True,
+    )
     return judge
 
 

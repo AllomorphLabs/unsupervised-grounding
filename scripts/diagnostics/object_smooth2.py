@@ -13,7 +13,7 @@ backward over the object's states, holding the rest of each decoded frame fixed:
 The particle filter reads each episode forwards and samples what the world model proposes; this
 weighs every state of the object at every sentence, and uses later sentences too.
 
-    GRID_CFG=<config> uv run python runs/queue/object_smooth.py <facts pair> <checkpoint>
+    GRID_CFG=<config> uv run python scripts/diagnostics/object_smooth.py <facts pair> <checkpoint>
 """
 
 import json
@@ -130,10 +130,13 @@ def smooth(b, F, k, looks=False):
         P = G[:, t - 1][:, :, None].expand(Be, Sn, Sn, d).reshape(-1, d)
         C = G[:, t][:, None, :].expand(Be, Sn, Sn, d).reshape(-1, d)
         moved = (P != C).any(1)
-        ew = fit.emit_words(b.tok[t], P, C, moved, D.actor_word(C, fit.places_t), rows=rows,
-                            focus=focus)
+        ew = fit.emit_words(
+            b.tok[t], P, C, moved, D.actor_word(C, fit.places_t), rows=rows, focus=focus
+        )
         h = D.fm.context(P[:, None])[:, 0]
-        lt = torch.where(moved, np.log(1 - q) + D.fm.log_prob_next(h, C), torch.tensor(np.log(q), device=dev))
+        lt = torch.where(
+            moved, np.log(1 - q) + D.fm.log_prob_next(h, C), torch.tensor(np.log(q), device=dev)
+        )
         lp = (torch.log(ew.clamp(min=1e-30)) + lt).reshape(Be, Sn, Sn)
         lp = lp + lz[:, t][:, None, :] + logok[:, t][:, None, :]
         real = b.real[t][:, None, None]

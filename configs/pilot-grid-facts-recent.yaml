@@ -1,6 +1,6 @@
 # Grid video redrawn from the facts found in each frame, frozen for the confirmation search on fresh
 # grid pair 3 (experiment log, entries 99-105). As configs/pilot-grid-decipher-split.yaml, run on a
-# pair's facts copy (runs/queue/make_facts_pair.py), except:
+# pair's facts copy (`python -m grounding.data.facts`), except:
 # - a staying sentence may report the changes of the most recent move (recent_change, entry 103).
 #   Weighing every appearance change (edit_proposals) was tried and dropped (entry 105).
 #

@@ -6,7 +6,8 @@ path, in place of the particles' sampled paths, goes to the usual update. So the
 the summary model learn from the exactly inferred histories. Afterwards the score episodes are
 decoded, as decoded and with exact object inference.
 
-    GRID_CFG=<config> uv run python runs/queue/smoothed_em.py <facts pair> <checkpoint> [rounds]
+    GRID_CFG=<config> uv run python scripts/diagnostics/smoothed_em.py <facts pair> \
+        <checkpoint> [rounds]
 """
 
 import json
@@ -61,8 +62,12 @@ def report(label):
     for k in objects:
         dec = [(b, sl.smooth(b, F, k)) for b, F in dec]
     ex, comp = score(dec)
-    print(f"SEM {label:18s} judge {judge:.4f} exact as decoded {ex0:.3f}, with exact objects {ex:.3f} "
-          f"{json.dumps(comp)}", flush=True)
+    print(
+        f"SEM {label:18s} judge {judge:.4f} exact as decoded {ex0:.3f}, "
+        f"with exact objects {ex:.3f} "
+        f"{json.dumps(comp)}",
+        flush=True,
+    )
 
 
 report("start")

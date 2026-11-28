@@ -78,18 +78,17 @@ A full search takes hours, so time spent making runs faster, and choosing the ch
 - **Exact speed-ups first.** A change that gives bit-identical results needs only a check, not new experiments. Verify it against the committed code on the same inputs: on the CPU, then on the GPU at a real search's size, with the old code run twice to see what reproduces itself. A change that differs by rounding is a method change: test it like one, or don't make it.
 - **Switch it on.** A verified speed-up behind a setting does nothing until the setting is on. Check the defaults and configs that searches actually use (entry 91 found two exact speed-ups that had never been enabled).
 - **Usual suspects:** many tiny GPU operations (launch overhead; CUDA graphs help), waiting for the GPU inside loops (`.item()`, `float()`, `.tolist()`, `if tensor.any()`), recomputing what doesn't change (histories, fixed matrices), and GPU memory filling and spilling into system memory (decision 25).
-- **Keep the GPU busy, one job at a time.** Queue work through `runs/queue/`, keep a short job queued behind a long one, watch long runs for stalls and memory spill, and run CPU-side checks with the GPU hidden so they can't disturb a run.
+- **Keep the GPU busy, one job at a time.** Queue work through `runs/queue/jobs.txt` (runner and watcher in `scripts/queue/`), keep a short job queued behind a long one, watch long runs for stalls and memory spill, and run CPU-side checks with the GPU hidden so they can't disturb a run.
 
 ## Running alignment experiments
 
 The experiment log, [`docs/alignment-attempts.md`](docs/alignment-attempts.md), is append-only and numbered; read its "Where we are now" first. It is the record a new session starts from.
 
-- **Resume, don't restart.** `runs/queue/refit_restarts.py` saves each fit's state after every iteration and just before the split moves; `FIT_RESUME=<checkpoint>` continues from one with changed settings (entry 98). Most tests of a change to the split moves or to late iterations take minutes this way.
+- **Resume, don't restart.** `scripts/diagnostics/refit_restarts.py` saves each fit's state after every iteration and just before the split moves; `FIT_RESUME=<checkpoint>` continues from one with changed settings (entry 98). Most tests of a change to the split moves or to late iterations take minutes this way.
 - **Test on both tuning pairs before believing a change.** A change that helped one grid pair has often hurt the other (entries 100-105). Grid pairs 1 and 2 are the tuning pairs; keep fresh pairs (grid pair 3 and later) untouched until a confirmation search with a frozen config.
-- **Find which part fails before fixing it.** `runs/queue/hunger_halves.py` swaps in word tables or a summary model fitted to the true frames, and `halves_score.py` checks whether the method's own score prefers them (entries 101-102). Use hidden/ only on tuning pairs, and only to diagnose.
+- **Find which part fails before fixing it.** `scripts/diagnostics/hunger_halves.py` swaps in word tables or a summary model fitted to the true frames, and `scripts/diagnostics/halves_score.py` checks whether the method's own score prefers them (entries 101-102). Use hidden/ only on tuning pairs, and only to diagnose.
 - **Don't trust the summaries' likelihood alone.** On grid video it prefers wrong summary models (entry 102); judge changes by the method's own fit on the selection episodes, and by accuracy on tuning pairs.
 - **Queue gaps.** The queue runner takes the next job as soon as one ends, so a long job further down can grab the GPU while a new test is being added. Comment such jobs out (`#HOLD <line>`) and restore them when the GPU is free.
-- **Agree the plan, then follow it.** If a step fails, report and ask before switching to a different step of the agreed plan.
 
 ## Technical decisions
 

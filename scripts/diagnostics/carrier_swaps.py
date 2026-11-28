@@ -1,4 +1,8 @@
-"""Diagnostic (entry 105; uses hidden/ only to score): permutation moves on a whole fit.
+"""Diagnostic (entry 106; uses hidden/ only to score): carrier swaps on a whole fit.
+
+For each object (a thing carried by two others), its two "with" facts (carried by one agent or
+the other) are exchanged in the word tables (state, arrival, departure) and the summary model,
+judged by the method's own fit and decoded. Adapted from place_perms_all.py:
 
 As place_perms.py, but each reordering of a thing's places is applied to the word tables (its
 place facts, their arrivals and their departures) as well as the summary model.
@@ -7,11 +11,10 @@ For each thing, every reordering of its "at" rows (which place each of its place
 judged by the method's own fit (the filter on the first fit batch, fixed draws, as split_judge).
 The best few per thing, and the best overall, are then decoded to show what they do to accuracy.
 
-    GRID_CFG=<config> uv run python runs/queue/place_perms.py <facts pair> <checkpoint>
+    GRID_CFG=<config> uv run python scripts/diagnostics/place_perms.py <facts pair> <checkpoint>
 """
 
 import dataclasses
-import itertools
 import json
 import sys
 from pathlib import Path
@@ -77,22 +80,37 @@ def permuted(model, k, perm):
     return Gauss(Wb, g.A, g.pairs), dataclasses.replace(t, ps=ps, pc=pc)
 
 
+with_ = {}
+for j, u in enumerate(D.units.units):
+    if u[0] == "with":
+        for k in u[1:]:
+            with_.setdefault(k, []).append(j)
+objects = [k for k, js in with_.items() if len(js) == 2]
+
+
+def swapped(model, rows):
+    g, t = model
+    a, b_ = rows
+    src = [b_, a]
+    Wb = g.Wb.clone()
+    Wb[[a, b_]] = g.Wb[src]
+    ps, pc = t.ps.clone(), t.pc.clone()
+    ps[:, [a, b_]] = t.ps[:, src]
+    pc[:, [a, b_]] = t.pc[:, src]
+    pc[:, [U + a, U + b_]] = t.pc[:, [U + r for r in src]]
+    return Gauss(Wb, g.A, g.pairs), dataclasses.replace(t, ps=ps, pc=pc)
+
+
 j0 = judged(base)
-print(f"PERM baseline judge {j0:.4f}", flush=True)
-best_all = []
-for k in sorted(at):
-    res = []
-    for perm in itertools.permutations(range(len(at[k]))):
-        if perm == tuple(range(len(at[k]))):
-            continue
-        res.append((judged(permuted(base, k, perm)), perm))
-    res.sort(reverse=True)
-    print(f"PERM thing {k}: best {res[0][0]:.4f} {res[0][1]}, next {res[1][0]:.4f} {res[1][1]} "
-          f"(baseline {j0:.4f})", flush=True)
-    best_all.append((res[0][0], k, res[0][1]))
-best_all.sort(reverse=True)
 ex, comp = scored(base)
-print(f"PERM decode baseline exact {ex:.3f} {json.dumps(comp)}", flush=True)
-for jv, k, perm in best_all[:3]:
-    ex, comp = scored(permuted(base, k, perm))
-    print(f"PERM decode thing {k} {perm} judge {jv:.4f} exact {ex:.3f} {json.dumps(comp)}", flush=True)
+print(f"CARRY baseline judge {j0:.4f} exact {ex:.3f} {json.dumps(comp)}", flush=True)
+for k in objects:
+    m = swapped(base, with_[k])
+    jv = judged(m)
+    ex, comp = scored(m)
+    print(
+        f"CARRY swap thing {k} {[D.units.units[j] for j in with_[k]]} judge {jv:.4f} "
+        f"exact {ex:.3f} "
+        f"{json.dumps(comp)}",
+        flush=True,
+    )

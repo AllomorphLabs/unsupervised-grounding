@@ -1,5 +1,6 @@
-"""Diagnostic (entry 101; uses hidden/): when a fit reads hunger badly, is it the word tables or
-the summary model?
+"""Diagnostic (entry 101; uses hidden/ only to score): does refining a fit's whole summary model on
+the summaries alone (align.latent.fit_latent, started from the fit's own model) recover what the
+true-frame summary model gives? Also scores each summary model by that same objective.
 
 Loads a saved fit (a checkpoint of refit_restarts.py) on a facts pair, and a model fitted to the
 TRUE frames (redrawn as the facts pair is: oracle_objective_lib, units.canonical_frames). Then
@@ -7,7 +8,8 @@ decodes the score episodes four ways: the fit as saved; with the true-frame word
 true-frame summary model; and the true-frame model itself. Whichever swap restores hunger shows
 which half the fit gets wrong.
 
-    GRID_CFG=<config> uv run python runs/queue/hunger_halves.py <facts pair> <original pair> <checkpoint>
+    GRID_CFG=<config> uv run python scripts/diagnostics/hunger_halves.py <facts pair> <original \
+        pair> <checkpoint>
 """
 
 import copy
@@ -35,7 +37,9 @@ cfg, D, data, key, world = S["cfg"], S["D"], S["data"], S["key"], S["world"]
 raw_units = find_units(load_obs(original / "data"))
 saved = torch.load(ck, map_location="cuda", weights_only=False)
 m = saved["state"]["m"]
-print(f"HALVES {pair.name} from {ck.name} (iteration {saved['iteration']}), matching {m}", flush=True)
+print(
+    f"HALVES {pair.name} from {ck.name} (iteration {saved['iteration']}), matching {m}", flush=True
+)
 
 # The true-frame model, on frames redrawn from their facts as the facts pair's are.
 rng = np.random.default_rng(0)
@@ -66,23 +70,49 @@ del paths
 
 fit = make_fit(D, m)
 fit.__dict__.update(saved["state"])
-words_true = copy.copy(fit)
-words_true.__dict__ = dict(fit.__dict__)
-for k in ("t", "sig"):
-    if k in oracle.__dict__:
-        words_true.__dict__[k] = oracle.__dict__[k]
-summary_true = copy.copy(fit)
-summary_true.__dict__ = dict(fit.__dict__)
-summary_true.__dict__["gauss"] = oracle.gauss
+from grounding.align.latent import _loglik, fit_latent, prune  # noqa: E402
+
+z = torch.cat([b.z[b.real] for b in S["batches"]["fit"]])
+views, prior = prune(*D.unit_prior())
+logp = torch.log(prior.clamp(min=1e-12))
+
+
+def latent_ll(g):
+    return float(_loglik(z, views, logp, g, 2048)[0])
+
+
+refined = {}
+for its in (10, 40):
+    r = fit_latent(
+        z,
+        views,
+        prior,
+        iterations=its,
+        restarts=1,
+        temp0=1.0,
+        init=fit.gauss,
+        pairs=D.pairs,
+        jitter=0.0,
+    )
+    refined[its] = r.gauss
+print(
+    f"REFINE latent loglik: fit {latent_ll(fit.gauss):.4f}, "
+    f"refined10 {latent_ll(refined[10]):.4f}, "
+    f"refined40 {latent_ll(refined[40]):.4f}, true-frame {latent_ll(oracle.gauss):.4f}",
+    flush=True,
+)
 group = automorphisms(world)
-for label, f in (
-    ("as saved", fit),
-    ("true word tables", words_true),
-    ("true summary model", summary_true),
-    ("true-frame model", oracle),
+for label, g in (
+    ("as saved", fit.gauss),
+    ("refined 10", refined[10]),
+    ("refined 40", refined[40]),
+    ("true summary model", oracle.gauss),
 ):
+    f = copy.copy(fit)
+    f.__dict__ = dict(fit.__dict__)
+    f.__dict__["gauss"] = g
     frames, positions = f.decode(S["batches"]["score"])
     pred = np.stack([state_to_array(decode(world, x, key)) for x in frames])
     r = score_predictions(world, group, pred, lang_truth(data, positions))
     comp = {k: round(v, 3) for k, v in r["components"].items()}
-    print(f"HALVES {label:20s} exact {r['modulo_symmetry']:.3f} {json.dumps(comp)}", flush=True)
+    print(f"REFINE {label:20s} exact {r['modulo_symmetry']:.3f} {json.dumps(comp)}", flush=True)

@@ -110,3 +110,55 @@ def test_context_cache_gives_the_same_filter(pair):
         out.append((ll, torch.cat([p[1].flatten() for p in paths])))
     assert abs(out[0][0] - out[1][0]) < 1e-4 * max(1.0, abs(out[0][0]))
     assert (out[0][1] == out[1][1]).float().mean() > 0.99
+
+
+def _fit_and_batches(pair, cfg):
+    from grounding.align.decipher import make_batches, sample, standardise
+    from grounding.models.train import load_model
+    from grounding.runs.record import read_record
+
+    D = GridDecipherer(pair, cfg, "cpu")
+    eps = sample(D.lang, read_record(pair / "data").seed, cfg)
+    b = make_batches(
+        D.lang, eps["fit"], cfg, load_model(pair / "models" / cfg.lang_model, "cpu"), "cpu"
+    )
+    standardise(b)
+    return D, make_fit(D, D.matchings()[0]), b
+
+
+def test_exact_objects_are_the_things_that_never_move_alone(pair):
+    from grounding.align.objects import objects
+
+    D = GridDecipherer(pair, replace(TINY, screen=0), "cpu")
+    obj = objects(D)
+    assert len(obj) == 2  # tiny: 2 agents carry 2 objects
+    agents = [k for k in range(len(D.units.things)) if k not in obj]
+    assert all(D.moves_alone[k] > 0 for k in agents)
+
+
+def test_exact_objects_decode_gives_valid_frames(pair):
+    """Decoding with exact object inference gives one valid frame per sentence, and changes only
+    the objects' values (technical decision 30)."""
+    import numpy as np
+
+    from grounding.align.objects import objects
+
+    D, f, b = _fit_and_batches(pair, replace(TINY, screen=0))
+    f.fit(b, log=lambda s: None)
+    plain, pos0 = f.decode(b)
+    D.cfg = replace(D.cfg, exact_objects=True)
+    exact, pos1 = f.decode(b)
+    assert exact.shape == plain.shape and (pos0 == pos1).all()
+    ok = D.valid(__import__("torch").tensor(exact, dtype=__import__("torch").float32))
+    assert ok is None or bool(ok.all())
+    obj_vals = [v for k in objects(D) for v in D.units.things[k]]
+    rest = np.setdiff1d(np.arange(exact.shape[1]), obj_vals)
+    assert (exact[:, rest] == plain[:, rest]).all()
+
+
+def test_exact_objects_inside_the_fit_runs(pair):
+    cfg = replace(TINY, screen=0, iterations=3, exact_objects_from=1, exact_objects=True)
+    _, f, b = _fit_and_batches(pair, cfg)
+    f.fit(b, log=lambda s: None)
+    frames, _ = f.decode(b)
+    assert len(frames) == int(sum(x.real.sum() for x in b))

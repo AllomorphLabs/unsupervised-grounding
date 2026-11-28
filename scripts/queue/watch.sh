@@ -4,7 +4,7 @@
 # (RESULT, selection score, iteration 8/12/16, split start); the running job's log silent
 # for STALL minutes (repeats every STALL minutes); GPU shared-memory spill above 0.6 GB or
 # back below it; GPU temperature crossing 90 C; the queue idle (no job running).
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/../../runs/queue"
 STALL=${STALL:-40}
 seen=$(ls *.done 2>/dev/null | sort); errs=""; res=""; spill=0; hot=0; idle=0; warned=""
 while true; do
