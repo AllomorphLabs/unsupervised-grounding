@@ -20,9 +20,9 @@ taught us.
 
 ## Where we are now
 
-*(Updated as the work moves on. Last updated after experiment 100.)*
+*(Updated as the work moves on. Last updated after experiment 106.)*
 
-**Phase 3, grid video and state vectors with nothing hand-written (entries 56-100).**
+**Phase 3, grid video and state vectors with nothing hand-written (entries 56-106).**
 - Both observation formats find their structure from their own statistics, and the words'
   kinds come from the language alone; the search leaves the agents' order free.
 - **Hunger on grid video is solved under the true matching** (entries 69-76): split moves teach
@@ -39,7 +39,7 @@ taught us.
   worlds the confusions follow the violation rate,** as H3 predicts.
 - **Speed:** a faster filter, a cached context and a CUDA-graph frame sampler reproduce the
   current code exactly on the GPU (entry 83). With them a grid search takes about 4 hours,
-  against 8. They are on the `feat/perf` branch, not yet merged.
+  against 8. Merged, and on by default (entry 91).
 - **Tuning pairs:** pilot pairs 0-2, grid pair 0 and the lured pairs 0 have been used to make
   choices while looking at the truth, so they can't confirm the method (technical decision 24).
 - **State vectors in the lured world: the first full success** (entry 86). With nothing
@@ -50,27 +50,51 @@ taught us.
   1 and 2, at 62.9% and 64.0% exact (mean over three pairs 65.0%).
 - **Grid video on fresh pair 1** (entry 88): the true matching selected, but with hunger read
   poorly (71-73%), so only 13% of frames are exact.
-- **Grid video's gap is in the alignment, not the watcher** (entries 89-94). The grid world model
-  proposes next moments as well as the state-vector one, and the parsed structure is exact. On
-  pair 1 the fit never links the word "hungry" to the hunger change. More data, other settings,
-  restarts, retrying appearances and hints for verbs each fixed one thing and broke another.
-- **The objective is sound; a blank-start fit is trapped** (entries 95-98). Started from the
-  truth, the fit reaches the method's best score and decodes 54% exact on pair 1 (entry 96).
-  From a blank start, every change tried so far settles on a worse picture: more candidates and
-  edit proposals (94), the narration mismatch (96), how the summary model first forms (97), and
-  four times the particles (98). More particles gave the best blank-start fit yet by iteration
-  12, but it decoded only 8%: the trap isn't a shortage of distinct guesses.
-- **Speed** (entry 91): the sampler graph and the cached context, both exact, are now on by
-  default. The filter is about twice as fast.
-- **Grid video redrawn from its facts** (entries 99-100). Each frame is redrawn from the facts
-  its own parser finds, so a world state has one drawing, and the world model and the filter work
-  on that. From a blank start, under the true matching on pair 1, this decodes 44.3% exact, and
-  50.1% once the split moves also retry every appearance: both agents' hunger at 97%, against
-  4.9-25.3% for every blank start on the original frames. Proposal edit 11 is drafted for review.
-- **Running:** the frozen search (`configs/pilot-grid-facts-decipher.yaml`) on fresh grid pair
-  2's facts copy, about 9-10 hours. Grid pairs 3-4 stay fresh. [TBD]
-- **Checkpoints:** fits can now save what they have learned after every iteration and resume
-  from any of them with changed settings (entry 98), so a test no longer has to start again.
+- **Grid video's gap is in the alignment, not the watcher** (entries 89-98). The grid world model
+  proposes next moments as well as the state-vector one, and the parsed structure is exact. Started
+  from the truth, the fit reaches the method's best score (entry 96), but every blank start was
+  trapped, and more particles didn't help (entry 98).
+
+**Grid video, current state (entries 99-106).** All numbers are under the true matching, on the
+tuning pairs, grid pairs 1 and 2 (lured world). Grid pair 3 is fresh (its facts copy and world model
+exist; a search was started and stopped unread), grid pair 4 too (its language model isn't
+trained).
+
+| Step | Pair 1 | Pair 2 | Entry |
+|---|---|---|---|
+| Original frames, best blank start | 25.3% | not run | 96 |
+| **Frames redrawn from their facts** (`units.canonical_frames`, `runs/queue/make_facts_pair.py`) | 44.3% | 11.8% | 99, 101 |
+| **+ narration fix** (`recent_change`) | 71.0-72.6% | 30.6% | 103 |
+| **+ exact inference per object at decoding** (`runs/queue/object_smooth2.py`) | **78.7%** | **43.9%** | 106 |
+| + `edit_proposals`, then 3 rounds training on exact object histories (`smoothed_em.py`) | not run | **47.7%** (8 rounds running) | 106 |
+| Ceiling: model fitted to the true frames | about 89% | 79-87% | 101, 104 |
+
+- *What works and why:* (1) redrawing removes the random cell within a patch, so one world state
+  has one drawing; (2) `recent_change` lets a sentence report the most recent move's changes, as
+  the language tells one world step in several sentences; (3) exact forward-backward per object,
+  given the rest of the decoded frame, fixes the particle filter's forward-only guessing (at a drop
+  it often handed the stone to the other agent).
+- *Diagnosis tools:* `runs/queue/hunger_halves.py` swaps in word tables or a summary model fitted to
+  the true frames; on both pairs the summary model is the bottleneck (entry 101), and the method's
+  own fit prefers the true-frame summary model (entry 102), so the objective points the right way.
+- *Still wrong on pair 2:* agent B's hunger (75%) unless `edit_proposals` is on (97%), but
+  `edit_proposals` broke pair 1 (8.8%, entry 105); and the glass falls (87% to 73%) as training on
+  exact object histories raises the stone.
+- *Tried and dropped* (entries 100-106): `split_looks` with `recent_change`, `summary_paths: words`,
+  `split_judge`, `summary_soft`, refits of the summary model on the summaries alone (that objective
+  prefers wrong models), swap, reordering, carrier and random-search moves, restarting one thing.
+- *Frozen config so far:* `configs/pilot-grid-facts-recent.yaml` (grid search plus
+  `recent_change`, on a facts copy). It does not yet include exact object inference, which exists
+  only in `runs/queue/` scripts and must move into `src/grounding/align/` (with tests) before any
+  confirmation search.
+- *Next:* (1) finish the 8-round run; (2) put exact per-object inference into the fit and decode
+  as a method option, keep its world-model step on the learned frame model (not counted
+  transitions, which are a control); (3) the glass's fall and agent B's hunger; (4) confirm on
+  both tuning pairs, then once on fresh grid pair 3 with a frozen config. Proposal edit 11 (redrawn
+  frames) and a new edit for exact object inference await Shane's review.
+- **Checkpoints:** refits save what they have learned after every iteration (and before the split
+  moves) and resume from any of them with changed settings (`FIT_RESUME`, entry 98), so most tests
+  take minutes, not hours.
 
 **The pilot (entries 1-55).** The state of the pilot when it ended:
 

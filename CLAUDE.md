@@ -80,6 +80,17 @@ A full search takes hours, so time spent making runs faster, and choosing the ch
 - **Usual suspects:** many tiny GPU operations (launch overhead; CUDA graphs help), waiting for the GPU inside loops (`.item()`, `float()`, `.tolist()`, `if tensor.any()`), recomputing what doesn't change (histories, fixed matrices), and GPU memory filling and spilling into system memory (decision 25).
 - **Keep the GPU busy, one job at a time.** Queue work through `runs/queue/`, keep a short job queued behind a long one, watch long runs for stalls and memory spill, and run CPU-side checks with the GPU hidden so they can't disturb a run.
 
+## Running alignment experiments
+
+The experiment log, [`docs/alignment-attempts.md`](docs/alignment-attempts.md), is append-only and numbered; read its "Where we are now" first. It is the record a new session starts from.
+
+- **Resume, don't restart.** `runs/queue/refit_restarts.py` saves each fit's state after every iteration and just before the split moves; `FIT_RESUME=<checkpoint>` continues from one with changed settings (entry 98). Most tests of a change to the split moves or to late iterations take minutes this way.
+- **Test on both tuning pairs before believing a change.** A change that helped one grid pair has often hurt the other (entries 100-105). Grid pairs 1 and 2 are the tuning pairs; keep fresh pairs (grid pair 3 and later) untouched until a confirmation search with a frozen config.
+- **Find which part fails before fixing it.** `runs/queue/hunger_halves.py` swaps in word tables or a summary model fitted to the true frames, and `halves_score.py` checks whether the method's own score prefers them (entries 101-102). Use hidden/ only on tuning pairs, and only to diagnose.
+- **Don't trust the summaries' likelihood alone.** On grid video it prefers wrong summary models (entry 102); judge changes by the method's own fit on the selection episodes, and by accuracy on tuning pairs.
+- **Queue gaps.** The queue runner takes the next job as soon as one ends, so a long job further down can grab the GPU while a new test is being added. Comment such jobs out (`#HOLD <line>`) and restore them when the GPU is free.
+- **Agree the plan, then follow it.** If a step fails, report and ask before switching to a different step of the agreed plan.
+
 ## Technical decisions
 
 Engineering choices (stack, tokenisation, word lists, package layout, how rules are enforced) are recorded in [`docs/technical-decisions.md`](docs/technical-decisions.md), each marked Decided, Proposed or Open. Read it before writing code, and follow Decided entries.

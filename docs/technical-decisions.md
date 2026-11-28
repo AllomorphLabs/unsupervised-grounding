@@ -34,6 +34,8 @@ Status is **Decided** (code follows it), **Proposed** (current plan, not yet con
 | 26 | The symmetry-free world: agents, places and objects all told apart | Decided |
 | 27 | The cipher control: a literal cipher of a second language corpus | Decided |
 | 28 | Worlds derived from the pilot world count as the pilot world | Decided |
+| 29 | Grid video's world model and filter work on frames redrawn from their facts | Proposed |
+| 30 | Exact inference for each object, given the rest of the frame | Proposed |
 
 ## 1. Python 3.15, PyTorch, uv
 
@@ -352,3 +354,16 @@ The proposal's upper bound: "word-for-word substitution of a second corpus in th
 Decision 4 says the pilot world must never be reused as a main-condition world or as the calibration world. The lured world (`sim/worlds.py`, experiment log entry 84) is the pilot world with one added rule, and has been used for tuning and for the confirmations in entries 86-88.
 
 - **Decided (Shane):** they count as the pilot world. The main conditions use new worlds, with other places, objects or rules, so nothing tuned on can leak into the main results. The lured world's results stay tuning and confirmation results for the method, not evidence for the hypotheses.
+
+## 29. Grid video's world model and filter work on frames redrawn from their facts
+
+Experiment log, entries 99-100. A grid frame also says which cell of its patch each thing was put in, which the renderer picks at random, so one world state has about seven drawings and the particle filter spends its guesses on drawings. Before the world model is trained, each frame is redrawn from the facts its own parser finds (`units.canonical_frames`): each thing in a fixed cell of its place, in its channel, a carried thing in its carrier's cell. The redrawn stream has the same facts, checked frame by frame (`runs/queue/make_facts_pair.py`). It uses only the frame stream. Under the true matching on grid pair 1, blank-start fits went from at best 25% exact to 44%.
+
+**Proposed:** pending Shane's decision whether it replaces the raw-frame grid method, and proposal edit 11 (`docs/proposed-proposal-edits.md`), which would say that grid video's world model predicts frames redrawn from their facts, and that the gap between the formats then mostly measures what the parser must discover.
+
+## 30. Exact inference for each object, given the rest of the frame
+
+Experiment log, entry 106. The particle filter reads an episode forwards and weighs only the frames the world model samples; at a drop it often hands an object to the other agent. Given the fit's decode, each object's whole history (things two others can carry, from the parse) is re-inferred exactly by forward-backward over its states, weighing the word tables, the learned world model's probability of each change, the stay probability, the summary model and validity. Under the true matching: grid pair 1 72.6% to 78.7% exact, pair 2 30.6% to 43.9%; training on those histories lifts pair 2 further (47.7% after 3 rounds).
+
+**Proposed:** so far only as `runs/queue/` scripts (`object_smooth2.py`, `smoothlib.py`, `smoothed_em.py`). Before it can be frozen it must move into `src/grounding/align/` with tests. Its world-model step must use the learned frame model, not transitions counted from the frame stream, which are the lookup-table control. It changes how the method searches, so it needs a proposal edit for Shane's review.
+
