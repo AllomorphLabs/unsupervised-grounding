@@ -2878,3 +2878,48 @@ step that sorts frame values and words into kinds, and the search that fixed the
   a full search, on fresh grid pair 3's facts copy (built and checked: 145,208 distinct frames in
   the first 200,000 become 20,846). [TBD]
 
+**106. Exact inference for each object, given the rest of the decoded frame, fixes most of the stone: pair 1 79% exact, pair 2 44-48%.**
+- *Why:* with Shane, fix the stone on pairs 1 and 2 before confirming on a fresh pair (grid pair 3's
+  search was stopped before anything was read, so it stays fresh).
+- *Tried and failed* (pair 2, true matching, `recent_change`):
+  - `summary_soft` (a new option, off by default): the summary model fitted to each sentence's
+    view averaged over all particles (regression calibration), from a blank start: 20.6% exact,
+    stone 46%.
+  - Restarting the thing with the weakest place effects inside the fitted model
+    (`runs/queue/object_restart.py`; it picks the stone from the fit alone), 6 more rounds, 2
+    starts: 10.1-10.3%, stone 17-20%, and a lower fit; the unchanged fit 30.8%.
+  - Swapping an object's two carrier facts (`carrier_swaps.py`): worse for every object.
+- *What the stone's errors are* (`runs/queue/` scratch diagnostics on the saved decode): the decoded
+  stone never jumps between places while lying (0 of 10,852), so the decode isn't stitched
+  inconsistently. Errors are worst after a drop (76-81% wrong, against 36-40% while lying since
+  the start): at a true drop the decode has the stone still in the dropper's hands 50% of the time,
+  and one sentence later in the other agent's hands 42% of the time. The filter, reading forwards
+  and weighing only what the world model samples, rarely has "the stone lying at the dropper's
+  place" among its candidates.
+- *Exact inference per object* (`runs/queue/object_smooth2.py`, `smoothlib.py`): the fit's decode
+  gives every frame; for each object (a thing two others can carry, found from the parse), its
+  whole history is re-inferred by forward-backward over its states (each value it can be drawn
+  in), weighing at every sentence and every pair of states the word tables, the learned world
+  model's probability of the change (one frame of context), the stay probability, the summary
+  model and validity. The same for each thing's appearance. Decoding only; the fit is unchanged.
+
+  | True matching, `recent_change` | As decoded | Exact objects | Stone | Glass | Apple | B hungry |
+  |---|---|---|---|---|---|---|
+  | Pair 1 | 72.6% | **78.7%** | 92% to 99.5% | 92% to 90% | 95% to 99.8% | 97% |
+  | Pair 2 | 30.6% | **43.9%** | 54% to 76% | 87% | 94% to 99.4% | 75% |
+  | Pair 2, with `edit_proposals` | 28.6% | 39.3% | 38% to 51% | 86% to 85% | 94% to 99.9% | 97% |
+
+  Appearances barely change (agent B's hunger on pair 2 75.0%): exact inference can't fix an
+  effect the summary model has wrong.
+- *Inside the fit* (`runs/queue/smoothed_em.py`): each extra round runs the filter, re-infers each
+  episode's objects exactly, and gives that path to the usual update; then decodes with exact
+  objects.
+  - From pair 2's `recent_change` fit, 3 rounds: 44.2% to 43.6% (stone 76% to 85%, glass 87% to
+    79%); the method's fit falls (52.21 to 50.56).
+  - From pair 2's `edit_proposals` fit, 3 rounds: 39.3%, 42.5%, 45.1%, **47.7%** (stone 51% to 76%,
+    both agents' hunger 97%, glass 85% to 73%); the method's fit stays about 53.2. As decoded,
+    without exact objects, 28.6% to 42.9%.
+- *Meaning:* the stone's error came from the filter, not the model: given the same model, exact
+  inference reads it far better, and training on its histories improves the model itself. The
+  glass falling as the stone rises is the next problem. 8 rounds are running. [TBD]
+

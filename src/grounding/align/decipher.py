@@ -83,6 +83,12 @@ class DecipherConfig:
     # both grid pairs that fit prefers the true-frame summary model, and the summaries alone
     # don't (entry 102).
     split_judge: bool = False
+    # Fit the summary model to each sentence's average view over all the filter's particles,
+    # instead of to a few sampled paths. Where the filter is unsure (an object lying unseen
+    # between being dropped and taken), a sampled path's view is a guess, and regressing the
+    # summaries on guesses shrinks and bends the fitted effects; the average is the standard cure
+    # (regression calibration). Entry 106.
+    summary_soft: bool = False
     iterations: int = 12
     own_prior: float = 20.0  # pseudo-counts on each value's own entity words, to start
     # Pseudo-counts tying each other word to the changes that happen about as often as it is said,
@@ -1194,8 +1200,29 @@ class SentenceFit(Fit):
             t.lam = (lamc + 1.0) / (lamc + 1.0).sum(-1, keepdim=True)
             self.sig = (sigc + 1.0) / (sigc + 1.0).sum()
         self.project()
+        if D.cfg.summary_soft and X:
+            X, Y = self._soft_views(paths)
         if X and it + 1 >= D.cfg.summary_from:
             self.gauss = Gauss.fit(torch.cat(X), torch.cat(Y), pairs=D.pairs)
+
+    @torch.no_grad()
+    def _soft_views(self, paths):
+        """Each real sentence's view averaged over all the filter's particles, with its summary
+        (summary_soft)."""
+        D, N = self.D, self.D.cfg.particles
+        X, Y = [], []
+        for b, traj, _ in paths:
+            if b.z is None:
+                continue
+            Tm, Be = b.real.shape
+            tr = traj.reshape(Be, N, Tm, -1)
+            v = torch.zeros(Be, Tm, D.U, device=D.dev)
+            for k in range(N):
+                v += D.view(tr[:, k].reshape(Be * Tm, -1).float()).reshape(Be, Tm, D.U)
+            keep = b.real.T
+            X.append(v[keep] / N)
+            Y.append(b.z.permute(1, 0, 2)[keep])
+        return X, Y
 
     def state(self) -> dict:
         return {**super().state(), "sig": self.sig.cpu()}
