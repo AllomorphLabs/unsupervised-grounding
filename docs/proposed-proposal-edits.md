@@ -147,8 +147,8 @@ worlds are reported as method development, not as evidence for the hypotheses.
 
 ## 11. Grid video's world model predicts the facts found in each frame, not the drawing
 
-**Status:** proposed, not applied. It depends on the result of the experiment log's entry 99 and
-on Shane's decision whether it replaces the current grid method or runs alongside it.
+**Applied (28 November):** accepted by Shane; the redrawn frames replace the raw-frame grid
+method (technical decision 29). Step 4 and the experimenter-supplied-grounding threat say so.
 
 **Evidence:** entries 89-98. The grid aligner already reads every frame as the facts it finds
 from the frame stream alone (places, things, appearances, carrying, a thing gone): the summary
@@ -174,4 +174,20 @@ search runs on it unchanged. Nothing comes from the language stream, the truth o
   what that procedure must discover, and the threat should say so.
 - The renderer checks are unaffected: the fixed cell of each thing follows from its colour,
   which is assigned at random per pair, so the redrawing keeps the agent symmetry.
+
+## 12. Exact inference for each object
+
+**Applied (28 November):** accepted by Shane (technical decision 30).
+
+**Evidence:** experiment log, entries 101-106. The particle filter reads an episode forwards and
+weighs only the frames the world model samples; at a drop it often hands the object to the other
+agent, and an object lying unseen between being dropped and taken is otherwise a guess. Given the
+fit's decode, re-inferring each object's whole history exactly lifts grid pair 1 from 72.6% to
+78.7% exact and pair 2 from 30.6% to 43.9% under the true matching, and training on those
+histories takes pair 2 to about 51%.
+
+**Edit:** in *Align, by decipherment*, a bullet after "weigh each proposed history": each
+object's history is then inferred exactly, given the rest of each decoded moment, with the
+learned world model's probability of each change. The lookup-table control is unaffected: the
+exact inference uses the learned world model, not counted transitions.
 

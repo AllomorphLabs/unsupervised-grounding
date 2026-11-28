@@ -89,7 +89,6 @@ The experiment log, [`docs/alignment-attempts.md`](docs/alignment-attempts.md), 
 - **Find which part fails before fixing it.** `runs/queue/hunger_halves.py` swaps in word tables or a summary model fitted to the true frames, and `halves_score.py` checks whether the method's own score prefers them (entries 101-102). Use hidden/ only on tuning pairs, and only to diagnose.
 - **Don't trust the summaries' likelihood alone.** On grid video it prefers wrong summary models (entry 102); judge changes by the method's own fit on the selection episodes, and by accuracy on tuning pairs.
 - **Queue gaps.** The queue runner takes the next job as soon as one ends, so a long job further down can grab the GPU while a new test is being added. Comment such jobs out (`#HOLD <line>`) and restore them when the GPU is free.
-- **Agree the plan, then follow it.** If a step fails, report and ask before switching to a different step of the agreed plan.
 
 ## Technical decisions
 
