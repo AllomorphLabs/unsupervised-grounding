@@ -6,7 +6,7 @@ for the chosen thing's "at" rows given the rest, and the noise is held fixed. St
 fit's own rows, and from zero. Each result is judged by the method's own fit (first fit batch,
 fixed draws) and decoded.
 
-    GRID_CFG=<config> uv run python runs/queue/restricted_em.py <facts pair> <checkpoint> <thing>
+    GRID_CFG=<config> uv run python scripts/diagnostics/restricted_em.py <facts pair> <checkpoint> <thing>
 """
 
 import json

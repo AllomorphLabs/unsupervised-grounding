@@ -90,10 +90,14 @@ TOUCHES_HIDDEN = re.compile(
 
 
 def test_only_analysis_and_corpus_building_touch_hidden_files():
-    # The analysis package scores against the truth; corpus building writes it. Nothing
-    # else, including alignment and training, may reach it.
+    # The analysis package scores against the truth; corpus building writes it, and a pair's
+    # facts copy (data/facts.py, technical decision 29) copies it across unread, so the copy can
+    # be scored like the original. Nothing else, including alignment and training, may reach it.
     def allowed(p: Path) -> bool:
-        return SRC / "analysis" in p.parents or p == SRC / "data" / "corpus.py"
+        return SRC / "analysis" in p.parents or p in (
+            SRC / "data" / "corpus.py",
+            SRC / "data" / "facts.py",
+        )
 
     offenders = [
         p.relative_to(SRC)

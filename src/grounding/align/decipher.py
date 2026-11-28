@@ -89,6 +89,12 @@ class DecipherConfig:
     # summaries on guesses shrinks and bends the fitted effects; the average is the standard cure
     # (regression calibration). Entry 106.
     summary_soft: bool = False
+    # Exact inference for each object, given the rest of each decoded frame
+    # (grounding.align.objects, technical decision 30). ``exact_objects``: decode with it.
+    # ``exact_objects_from`` > 0: every iteration after that one learns from the exactly inferred
+    # paths instead of the particles' sampled ones (entry 106). Grid video only.
+    exact_objects: bool = False
+    exact_objects_from: int = 0
     iterations: int = 12
     own_prior: float = 20.0  # pseudo-counts on each value's own entity words, to start
     # Pseudo-counts tying each other word to the changes that happen about as often as it is said,
@@ -952,6 +958,14 @@ class Fit:
                     cfg_.summary_power - cfg_.summary_ramp_start
                 )
             paths, ll = self.run(batches, seed=it + 1000 * self.D.cfg.seed)
+            if (
+                cfg_.exact_objects_from
+                and it + 1 > cfg_.exact_objects_from
+                and isinstance(self, GridFitMixin)
+            ):
+                from grounding.align.objects import exact_paths
+
+                paths = exact_paths(self, paths)
             self.update(paths, it)
             if cfg_.summary_paths == "words" and self.gauss is not None:
                 words_only, _ = self.run(
@@ -1316,6 +1330,24 @@ class GridDecipherer(Decipherer):
         for k in range(len(self.units.things)):
             cols = [j for j, u in enumerate(units) if u[0] in ("at", "gone") and u[1] == k]
             self.thing_changes[k] = float((wt * (changed[:, cols].sum(1) > 0).float()).sum())
+        # How often each thing changes place while sharing a cell with nothing in either frame,
+        # that is, moves on its own: agents do, objects (moved only while carried) never do
+        # (grounding.align.objects).
+        with_cols = {
+            k: [j for j, u in enumerate(units) if u[0] == "with" and k in u[1:]]
+            for k in range(len(self.units.things))
+        }
+        self.moves_alone = np.zeros(len(self.units.things))
+        self.place_changes = np.zeros(len(self.units.things))
+        for k in range(len(self.units.things)):
+            at = [j for j, u in enumerate(units) if u[0] == "at" and u[1] == k]
+            moved = (u0[:, at] != u1[:, at]).any(1).float()
+            wc = with_cols[k]
+            alone = torch.ones_like(moved)
+            if wc:
+                alone = ((u0[:, wc].sum(1) == 0) & (u1[:, wc].sum(1) == 0)).float()
+            self.place_changes[k] = float((wt * moved).sum())
+            self.moves_alone[k] = float((wt * moved * alone).sum())
         self.word_counts = np.bincount(self.lang.tokens, minlength=self.V).astype(float)
         # How often each unit turns on and off per frame step (for the rate prior, entry 93).
         tot = float(wt.sum())
@@ -1530,7 +1562,18 @@ class GridFitMixin:
         N = D.cfg.particles
         frames, positions = [], []
         seed = 1000 * D.cfg.seed if seed is None else seed
-        for b, traj, _ in self.run(batches, seed)[0]:
+        paths = self.run(batches, seed)[0]
+        if D.cfg.exact_objects:
+            from grounding.align.objects import exact_frames
+
+            for b, F in exact_frames(self, paths):
+                fr = F.to(torch.uint8).cpu().numpy()
+                keep = b.real.T.cpu().numpy()
+                for e in range(fr.shape[0]):
+                    frames.append(fr[e][keep[e]])
+                    positions.append(b.ends[e])
+            return np.concatenate(frames), np.concatenate(positions)
+        for b, traj, _ in paths:
             Tm, Be = b.real.shape
             flat = traj.reshape(-1, D.d).float()
             units = D.view(flat).round().clamp(0, 1).long()

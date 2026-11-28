@@ -13,7 +13,7 @@ backward over the object's states, holding the rest of each decoded frame fixed:
 The particle filter reads each episode forwards and samples what the world model proposes; this
 weighs every state of the object at every sentence, and uses later sentences too.
 
-    GRID_CFG=<config> uv run python runs/queue/object_smooth.py <facts pair> <checkpoint>
+    GRID_CFG=<config> uv run python scripts/diagnostics/object_smooth.py <facts pair> <checkpoint>
 """
 
 import json

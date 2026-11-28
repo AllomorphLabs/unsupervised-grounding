@@ -20,7 +20,7 @@ taught us.
 
 ## Where we are now
 
-*(Updated as the work moves on. Last updated after experiment 106.)*
+*(Updated as the work moves on. Last updated after experiment 107.)*
 
 **Phase 3, grid video and state vectors with nothing hand-written (entries 56-106).**
 - Both observation formats find their structure from their own statistics, and the words'
@@ -63,10 +63,10 @@ trained).
 | Step | Pair 1 | Pair 2 | Entry |
 |---|---|---|---|
 | Original frames, best blank start | 25.3% | not run | 96 |
-| **Frames redrawn from their facts** (`units.canonical_frames`, `runs/queue/make_facts_pair.py`) | 44.3% | 11.8% | 99, 101 |
+| **Frames redrawn from their facts** (`units.canonical_frames`, `python -m grounding.data.facts`) | 44.3% | 11.8% | 99, 101 |
 | **+ narration fix** (`recent_change`) | 71.0-72.6% | 30.6% | 103 |
-| **+ exact inference per object at decoding** (`runs/queue/object_smooth2.py`) | **78.7%** | **43.9%** | 106 |
-| + `edit_proposals`, then rounds training on exact object histories (`smoothed_em.py`) | not run | **47.7%** (3 rounds), **about 51%** (5-8 rounds) | 106 |
+| **+ exact inference per object at decoding** (`exact_objects`, `grounding.align.objects`) | **78.7%** | **43.9%** | 106 |
+| + `edit_proposals`, then rounds training on exact object histories (`exact_objects_from`) | not run | **47.7%** (3 rounds), **about 51%** (5-8 rounds) | 106 |
 | Ceiling: model fitted to the true frames | about 89% | 79-87% | 101, 104 |
 
 - *What works and why:* (1) redrawing removes the random cell within a patch, so one world state
@@ -74,7 +74,7 @@ trained).
   the language tells one world step in several sentences; (3) exact forward-backward per object,
   given the rest of the decoded frame, fixes the particle filter's forward-only guessing (at a drop
   it often handed the stone to the other agent).
-- *Diagnosis tools:* `runs/queue/hunger_halves.py` swaps in word tables or a summary model fitted to
+- *Diagnosis tools:* `scripts/diagnostics/hunger_halves.py` swaps in word tables or a summary model fitted to
   the true frames; on both pairs the summary model is the bottleneck (entry 101), and the method's
   own fit prefers the true-frame summary model (entry 102), so the objective points the right way.
 - *Still wrong on pair 2:* agent B's hunger (75%) unless `edit_proposals` is on (97%), but
@@ -84,16 +84,14 @@ trained).
   `split_judge`, `summary_soft`, refits of the summary model on the summaries alone (that objective
   prefers wrong models), swap, reordering, carrier and random-search moves, restarting one thing.
 - *Frozen config so far:* `configs/pilot-grid-facts-recent.yaml` (grid search plus
-  `recent_change`, on a facts copy). It does not yet include exact object inference, which exists
-  only in `runs/queue/` scripts and must move into `src/grounding/align/` (with tests) before any
-  confirmation search.
-- *Next:* (1) the glass (74% after in-fit training, 86-87% before); (2) put exact per-object inference into the fit and decode
-  as a method option, keep its world-model step on the learned frame model (not counted
-  transitions, which are a control); (3) the glass's fall and agent B's hunger; (4) confirm on
-  both tuning pairs, then once on fresh grid pair 3 with a frozen config. Proposal edit 11 (redrawn
-  frames) and a new edit for exact object inference await Shane's review.
+  `recent_change`, on a facts copy). Exact object inference is now a method option
+  (`exact_objects`, `exact_objects_from` in `grounding.align.objects`, entry 107), not yet in a
+  frozen config. Decisions 29-30 are Decided and proposal edits 11-12 applied (Shane).
+- *Next:* (1) the glass (74% after in-fit training, 86-87% before) and agent B's hunger without
+  `edit_proposals`; (2) a stopping rule for in-fit training that needs no truth; (3) confirm a
+  frozen config on both tuning pairs, then once on fresh grid pair 3.
 - **Checkpoints:** refits save what they have learned after every iteration (and before the split
-  moves) and resume from any of them with changed settings (`FIT_RESUME`, entry 98), so most tests
+  moves) and resume from any of them with changed settings (`FIT_RESUME`, `scripts/diagnostics/refit_restarts.py`, entry 98), so most tests
   take minutes, not hours.
 
 **The pilot (entries 1-55).** The state of the pilot when it ended:
@@ -2950,4 +2948,23 @@ step that sorts frame values and words into kinds, and the search that fixed the
   **51.5%**, 50.7%, 51.1%, 50.9%; as decoded 32.4% to 47.9%. It levels off at about 51% from round
   5: stone 80%, both agents' hunger 97%, apple 99.9%, glass 74% (86% at the start). The method's fit
   drifts down (53.34 to about 52.0-52.3), so choosing how many rounds by that fit would stop early.
+
+**107. Exact object inference becomes a method option, and the experiment code leaves `runs/`.**
+- *Decided with Shane (28 November):* technical decisions 29 (frames redrawn from their facts
+  replace the raw-frame grid method) and 30 (exact inference for each object) are Decided;
+  proposal edits 11-12 are applied.
+- *Method code:* `grounding.align.objects`, with settings `exact_objects` (decode with it) and
+  `exact_objects_from` (iterations after that one learn from the exactly inferred paths), both
+  off by default. Objects are found from the frame stream alone: things that can share a cell with
+  another but never change place on their own (`GridDecipherer.moves_alone`); the first rule
+  (things two others can carry) wrongly took the agents for objects in a world with two objects.
+  `grounding.data.facts` builds a pair's facts copy (formerly `runs/queue/make_facts_pair.py`).
+- *Check:* decoding pair 2's `recent_change` fit with `exact_objects` (`scripts/diagnostics/
+  check_exact_objects.py`) finds the stone, glass and apple as objects and gives 43.7% exact
+  (stone 75.8%, apple 99.4%, glass 86.9%), the same as the scripts of entry 106. All 189 tests pass,
+  with new tests for the facts copy and for exact objects. The leakage test now also allows
+  `data/facts.py`, which copies a pair's hidden files across unread.
+- *Moves:* the experiment scripts in `runs/queue/` (refits, diagnostics, the queue runner and
+  watcher) are now in `scripts/diagnostics/` and `scripts/queue/` (`scripts/README.md`), and the
+  tuning configs in `configs/tuning/`. Older entries name the old paths. `runs/` holds outputs only.
 

@@ -6,7 +6,7 @@ path, in place of the particles' sampled paths, goes to the usual update. So the
 the summary model learn from the exactly inferred histories. Afterwards the score episodes are
 decoded, as decoded and with exact object inference.
 
-    GRID_CFG=<config> uv run python runs/queue/smoothed_em.py <facts pair> <checkpoint> [rounds]
+    GRID_CFG=<config> uv run python scripts/diagnostics/smoothed_em.py <facts pair> <checkpoint> [rounds]
 """
 
 import json

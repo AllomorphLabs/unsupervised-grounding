@@ -1,16 +1,12 @@
-"""Diagnostic (entry 105; uses hidden/ only to score): permutation moves on a whole fit.
-
-As place_perms.py, but each reordering of a thing's places is applied to the word tables (its
-place facts, their arrivals and their departures) as well as the summary model.
+"""Diagnostic (entry 105; uses hidden/ only to score): permutation moves on a fit's summary model.
 
 For each thing, every reordering of its "at" rows (which place each of its place facts means) is
 judged by the method's own fit (the filter on the first fit batch, fixed draws, as split_judge).
 The best few per thing, and the best overall, are then decoded to show what they do to accuracy.
 
-    GRID_CFG=<config> uv run python runs/queue/place_perms.py <facts pair> <checkpoint>
+    GRID_CFG=<config> uv run python scripts/diagnostics/place_perms.py <facts pair> <checkpoint>
 """
 
-import dataclasses
 import itertools
 import json
 import sys
@@ -38,43 +34,29 @@ at = {}
 for j, u in enumerate(D.units.units):
     if u[0] == "at":
         at.setdefault(u[1], {})[u[2]] = j
-base = (fit.gauss, fit.t)
+base = fit.gauss
 group = automorphisms(world)
 
 
-base_t = fit.t
-U = D.U
-
-
-def use(model):
-    fit.gauss, fit.t = model
-
-
-def judged(model):
-    use(model)
+def judged(g):
+    fit.gauss = g
     return fit.run(S["batches"]["fit"][:1], seed=424242)[1]
 
 
-def scored(model):
-    use(model)
+def scored(g):
+    fit.gauss = g
     frames, positions = fit.decode(S["batches"]["score"])
     pred = np.stack([state_to_array(decode(world, x, key)) for x in frames])
     r = score_predictions(world, group, pred, lang_truth(data, positions))
     return r["modulo_symmetry"], {k: round(v, 3) for k, v in r["components"].items()}
 
 
-def permuted(model, k, perm):
-    g, t = model
+def permuted(g, k, perm):
+    Wb = g.Wb.clone()
     places = sorted(at[k])
     rows = [at[k][p] for p in places]
-    src = [rows[i] for i in perm]
-    Wb = g.Wb.clone()
-    Wb[rows] = g.Wb[src]
-    ps, pc = t.ps.clone(), t.pc.clone()
-    ps[:, rows] = t.ps[:, src]
-    pc[:, rows] = t.pc[:, src]  # arrivals
-    pc[:, [U + r for r in rows]] = t.pc[:, [U + r for r in src]]  # departures
-    return Gauss(Wb, g.A, g.pairs), dataclasses.replace(t, ps=ps, pc=pc)
+    Wb[rows] = g.Wb[[rows[i] for i in perm]]
+    return Gauss(Wb, g.A, g.pairs)
 
 
 j0 = judged(base)

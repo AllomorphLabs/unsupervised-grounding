@@ -7,7 +7,7 @@ decodes the score episodes four ways: the fit as saved; with the true-frame word
 true-frame summary model; and the true-frame model itself. Whichever swap restores hunger shows
 which half the fit gets wrong.
 
-    GRID_CFG=<config> uv run python runs/queue/hunger_halves.py <facts pair> <original pair> <checkpoint>
+    GRID_CFG=<config> uv run python scripts/diagnostics/hunger_halves.py <facts pair> <original pair> <checkpoint>
 """
 
 import copy

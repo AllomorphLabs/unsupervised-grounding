@@ -1,6 +1,6 @@
 # Grid video redrawn from the facts found in each frame (experiment log, entries 99-100), frozen
 # for the confirmation search on fresh grid pair 2. As configs/pilot-grid-decipher-split.yaml,
-# run on a pair's facts copy (runs/queue/make_facts_pair.py), except:
+# run on a pair's facts copy (`python -m grounding.data.facts`), except:
 # - split moves also retry every appearance unit, not only the 4 facts of smallest effect, so
 #   both agents' hunger can be placed (entry 100).
 #

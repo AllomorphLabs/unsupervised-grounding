@@ -6,7 +6,7 @@ rows go back to the background word frequencies. The real fit then continues for
 from a few starting seeds. The unchanged fit gets the same rounds, so the comparison is fair. Each
 is judged by the method's own fit (first fit batch, fixed draws) and decoded.
 
-    GRID_CFG=<config> uv run python runs/queue/object_restart.py <facts pair> <checkpoint> [rounds] [starts]
+    GRID_CFG=<config> uv run python scripts/diagnostics/object_restart.py <facts pair> <checkpoint> [rounds] [starts]
 """
 
 import copy

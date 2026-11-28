@@ -11,7 +11,7 @@ For each thing, every reordering of its "at" rows (which place each of its place
 judged by the method's own fit (the filter on the first fit batch, fixed draws, as split_judge).
 The best few per thing, and the best overall, are then decoded to show what they do to accuracy.
 
-    GRID_CFG=<config> uv run python runs/queue/place_perms.py <facts pair> <checkpoint>
+    GRID_CFG=<config> uv run python scripts/diagnostics/place_perms.py <facts pair> <checkpoint>
 """
 
 import dataclasses

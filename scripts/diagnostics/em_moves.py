@@ -8,7 +8,7 @@ and is judged by the method's fit on the first fit batch with fixed draws. The c
 the same round with no move, so every candidate is compared fairly. The best candidate is kept if
 it beats that, and the next fact starts from it. Finally the result is decoded.
 
-    GRID_CFG=<config> uv run python runs/queue/em_moves.py <facts pair> <checkpoint> <thing>
+    GRID_CFG=<config> uv run python scripts/diagnostics/em_moves.py <facts pair> <checkpoint> <thing>
 """
 
 import copy

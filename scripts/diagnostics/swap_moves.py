@@ -5,7 +5,7 @@ frame structure alone: a thing's two appearances (which colour means what), two 
 appearances, or two things' places. Each is judged by the method's own fit (the filter on the
 first fit batch, fixed draws, as split_judge), and decoded to show what it does to accuracy.
 
-    GRID_CFG=<config> uv run python runs/queue/swap_moves.py <facts pair> <checkpoint>
+    GRID_CFG=<config> uv run python scripts/diagnostics/swap_moves.py <facts pair> <checkpoint>
 """
 
 import itertools
