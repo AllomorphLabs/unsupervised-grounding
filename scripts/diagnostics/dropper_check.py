@@ -46,10 +46,19 @@ for t in range(1, len(truth)):
         lies = k in (AT, BROKEN)
         at_decoded_dropper = lies and i == pred[u].pos[who]
         at_true_place = lies and i == b[1]
-        c[(d, "dropper decoded right" if dropper_ok else "dropper decoded wrong",
-           "object at true place" if at_true_place else
-           ("object at decoded dropper's place" if at_decoded_dropper else
-            ("object elsewhere" if lies else "object still held")))] += 1
+        c[
+            (
+                d,
+                "dropper decoded right" if dropper_ok else "dropper decoded wrong",
+                "object at true place"
+                if at_true_place
+                else (
+                    "object at decoded dropper's place"
+                    if at_decoded_dropper
+                    else ("object elsewhere" if lies else "object still held")
+                ),
+            )
+        ] += 1
 print(f"{obj}: {n} true drops")
 for d in (0, 1):
     tot = sum(v for (dd, *_), v in c.items() if dd == d)
