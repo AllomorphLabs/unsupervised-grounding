@@ -1,0 +1,46 @@
+# Grid video redrawn from the facts found in each frame (experiment log, entries 99-100), frozen
+# for the confirmation search on fresh grid pair 2. As configs/pilot-grid-decipher-split.yaml,
+# run on a pair's facts copy (runs/queue/make_facts_pair.py), except:
+# - split moves also retry every appearance unit, not only the 4 facts of smallest effect, so
+#   both agents' hunger can be placed (entry 100).
+#
+# Grid video decipherment with split moves on the summary model (experiment log, entries 69-74).
+# As configs/pilot-grid-decipher.yaml, except:
+# - split units: each thing's place and appearance are separate facts, so hunger is a fact of
+#   its own that split moves can place;
+# - summary power 0.5 (entry 68);
+# - after 12 particle iterations, split moves on the 4 facts of smallest effect, in 3 orders,
+#   with one thing's appearances also moved together; then 4 more iterations (16 in all);
+# - 256 fit episodes, as in the diagnostics.
+lang_model: lang-ps
+frame_model: obs-joint
+train_episodes: 256
+select_episodes: 128
+score_episodes: 300
+batch: 64
+max_sentences: 100
+sentence_tokens: 6
+particles: 32
+candidates: 4
+iterations: 16
+own_prior: 20.0
+smooth: 0.01
+summary_power: 0.5
+summary_features: linear
+emission: sentence
+summary_from: 5
+freeze_mixture: 8
+update_paths: 8
+shortlist: 6
+screen: 24
+screen_episodes: 128
+screen_iterations: 4
+word_kinds: classes
+grid_units: split
+valid_only: true
+split_at: 12
+split_weakest: 4
+split_looks: true
+split_rounds: 2
+split_together: true
+split_orders: 3

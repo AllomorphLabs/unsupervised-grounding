@@ -366,3 +366,58 @@ class UnitView:
                 )
             )
         return torch.cat(parts, 1)
+
+
+def canonical_frames(frames: np.ndarray, units: Units, chunk: int = 200_000) -> np.ndarray:
+    """Grid frames redrawn from their units alone: each thing in a fixed cell of its place.
+
+    A grid frame also says which cell of its patch each thing was drawn in, which the renderer
+    picks at random, so one world state has many drawings. Here thing ``k`` at place ``p`` is
+    drawn in the ``k``-th cell of the patch (in reading order) in the channel it was drawn in,
+    and things that shared a cell (a carried object) share the cell of the first of them. The
+    redrawn frame has the same units as the original (``find_units`` and ``UnitView`` read the
+    same facts from it), and one drawing per set of facts (experiment log, entry 99).
+
+    Uses only the frame stream and its units, so it is part of the aligner, not the truth."""
+    rows, cols, n_ch = units.shape
+    pc = np.array(units.place_of_cell)
+    T = len(units.things)
+    canon = np.full((T, units.places), -1)
+    for p in range(units.places):
+        cells = np.flatnonzero(pc == p)  # reading order
+        if len(cells) < T:
+            raise ValueError(f"place {p} has {len(cells)} cells, fewer than {T} things")
+        canon[:, p] = cells[:T]
+    out = np.zeros_like(frames)
+    for s in range(0, len(frames), chunk):
+        fr = frames[s : s + chunk]
+        n = len(fr)
+        cell = np.full((n, T), -1)
+        ch = np.zeros((n, T), dtype=np.int64)
+        for k, vals in enumerate(units.things):
+            v = np.array(vals)
+            on = fr[:, v] > 0
+            if (on.sum(1) > 1).any():
+                raise ValueError(f"thing {k} is drawn twice in one frame")
+            has = on.any(1)
+            w = v[on.argmax(1)]
+            cell[has, k] = w[has] // n_ch
+            ch[has, k] = w[has] % n_ch
+        # Each thing's leader: the first thing drawn in the same cell (itself if none).
+        lead = np.tile(np.arange(T), (n, 1))
+        for k in range(T):
+            for j in range(k - 1, -1, -1):
+                same = (cell[:, k] >= 0) & (cell[:, j] == cell[:, k])
+                lead[same, k] = j
+        rows_ = np.arange(n)
+        for k in range(T):
+            has = cell[:, k] >= 0
+            place = pc[np.where(has, cell[:, k], 0)]
+            new_cell = canon[lead[:, k], place]
+            o = out[s : s + chunk]
+            o[rows_[has], (new_cell * n_ch + ch[:, k])[has]] = 1
+        # Values outside every thing (none in the pilot's renderer) are kept as drawn.
+        rest = np.ones(fr.shape[1], dtype=bool)
+        rest[[x for vals in units.things for x in vals]] = False
+        out[s : s + chunk][:, rest] = fr[:, rest]
+    return out
