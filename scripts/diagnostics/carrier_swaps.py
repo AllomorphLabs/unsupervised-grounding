@@ -108,5 +108,9 @@ for k in objects:
     m = swapped(base, with_[k])
     jv = judged(m)
     ex, comp = scored(m)
-    print(f"CARRY swap thing {k} {[D.units.units[j] for j in with_[k]]} judge {jv:.4f} exact {ex:.3f} "
-          f"{json.dumps(comp)}", flush=True)
+    print(
+        f"CARRY swap thing {k} {[D.units.units[j] for j in with_[k]]} judge {jv:.4f} "
+        f"exact {ex:.3f} "
+        f"{json.dumps(comp)}",
+        flush=True,
+    )

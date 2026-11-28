@@ -2,7 +2,8 @@
 uses hidden/). The search is frozen and nothing here feeds back into it: this only gives an early
 look at how well each finalist's fit decodes, before the search has chosen.
 
-    uv run python scripts/diagnostics/score_finalists_live.py runs/pilot-grid-facts/pair-002 decipher-split 6
+    uv run python scripts/diagnostics/score_finalists_live.py runs/pilot-grid-facts/pair-002 \
+        decipher-split 6
 """
 
 import json

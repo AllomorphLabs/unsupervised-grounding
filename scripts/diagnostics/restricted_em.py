@@ -6,7 +6,8 @@ for the chosen thing's "at" rows given the rest, and the noise is held fixed. St
 fit's own rows, and from zero. Each result is judged by the method's own fit (first fit batch,
 fixed draws) and decoded.
 
-    GRID_CFG=<config> uv run python scripts/diagnostics/restricted_em.py <facts pair> <checkpoint> <thing>
+    GRID_CFG=<config> uv run python scripts/diagnostics/restricted_em.py <facts pair> \
+        <checkpoint> <thing>
 """
 
 import json
@@ -51,7 +52,9 @@ def restricted(g, iterations=40, reg=1e-2):
         XtY = P.T @ RZ
         W = g.Wb.clone()
         rhs = XtY[rows] - XtX[rows][:, others] @ W[others]
-        W[rows] = torch.linalg.solve(XtX[rows][:, rows] + reg * torch.eye(len(rows), device=W.device), rhs)
+        W[rows] = torch.linalg.solve(
+            XtX[rows][:, rows] + reg * torch.eye(len(rows), device=W.device), rhs
+        )
         g = Gauss(W, g.A, g.pairs)
         if i % 10 == 0 or i == iterations - 1:
             print(f"REM   iteration {i}: summaries' loglik {ll:.4f}", flush=True)
@@ -65,8 +68,10 @@ def report(label, g):
     pred = np.stack([state_to_array(decode(world, x, key)) for x in frames])
     r = score_predictions(world, group, pred, lang_truth(data, positions))
     comp = {k: round(v, 3) for k, v in r["components"].items()}
-    print(f"REM {label:22s} judge {judge:.4f} exact {r['modulo_symmetry']:.3f} {json.dumps(comp)}",
-          flush=True)
+    print(
+        f"REM {label:22s} judge {judge:.4f} exact {r['modulo_symmetry']:.3f} {json.dumps(comp)}",
+        flush=True,
+    )
 
 
 report("as saved", base)

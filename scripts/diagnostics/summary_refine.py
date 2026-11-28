@@ -8,7 +8,8 @@ decodes the score episodes four ways: the fit as saved; with the true-frame word
 true-frame summary model; and the true-frame model itself. Whichever swap restores hunger shows
 which half the fit gets wrong.
 
-    GRID_CFG=<config> uv run python scripts/diagnostics/hunger_halves.py <facts pair> <original pair> <checkpoint>
+    GRID_CFG=<config> uv run python scripts/diagnostics/hunger_halves.py <facts pair> <original \
+        pair> <checkpoint>
 """
 
 import copy
@@ -36,7 +37,9 @@ cfg, D, data, key, world = S["cfg"], S["D"], S["data"], S["key"], S["world"]
 raw_units = find_units(load_obs(original / "data"))
 saved = torch.load(ck, map_location="cuda", weights_only=False)
 m = saved["state"]["m"]
-print(f"HALVES {pair.name} from {ck.name} (iteration {saved['iteration']}), matching {m}", flush=True)
+print(
+    f"HALVES {pair.name} from {ck.name} (iteration {saved['iteration']}), matching {m}", flush=True
+)
 
 # The true-frame model, on frames redrawn from their facts as the facts pair's are.
 rng = np.random.default_rng(0)
@@ -80,14 +83,31 @@ def latent_ll(g):
 
 refined = {}
 for its in (10, 40):
-    r = fit_latent(z, views, prior, iterations=its, restarts=1, temp0=1.0, init=fit.gauss,
-                   pairs=D.pairs, jitter=0.0)
+    r = fit_latent(
+        z,
+        views,
+        prior,
+        iterations=its,
+        restarts=1,
+        temp0=1.0,
+        init=fit.gauss,
+        pairs=D.pairs,
+        jitter=0.0,
+    )
     refined[its] = r.gauss
-print(f"REFINE latent loglik: fit {latent_ll(fit.gauss):.4f}, refined10 {latent_ll(refined[10]):.4f}, "
-      f"refined40 {latent_ll(refined[40]):.4f}, true-frame {latent_ll(oracle.gauss):.4f}", flush=True)
+print(
+    f"REFINE latent loglik: fit {latent_ll(fit.gauss):.4f}, "
+    f"refined10 {latent_ll(refined[10]):.4f}, "
+    f"refined40 {latent_ll(refined[40]):.4f}, true-frame {latent_ll(oracle.gauss):.4f}",
+    flush=True,
+)
 group = automorphisms(world)
-for label, g in (("as saved", fit.gauss), ("refined 10", refined[10]), ("refined 40", refined[40]),
-                 ("true summary model", oracle.gauss)):
+for label, g in (
+    ("as saved", fit.gauss),
+    ("refined 10", refined[10]),
+    ("refined 40", refined[40]),
+    ("true summary model", oracle.gauss),
+):
     f = copy.copy(fit)
     f.__dict__ = dict(fit.__dict__)
     f.__dict__["gauss"] = g

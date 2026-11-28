@@ -69,12 +69,17 @@ for k in sorted(at):
             continue
         res.append((judged(permuted(base, k, perm)), perm))
     res.sort(reverse=True)
-    print(f"PERM thing {k}: best {res[0][0]:.4f} {res[0][1]}, next {res[1][0]:.4f} {res[1][1]} "
-          f"(baseline {j0:.4f})", flush=True)
+    print(
+        f"PERM thing {k}: best {res[0][0]:.4f} {res[0][1]}, next {res[1][0]:.4f} {res[1][1]} "
+        f"(baseline {j0:.4f})",
+        flush=True,
+    )
     best_all.append((res[0][0], k, res[0][1]))
 best_all.sort(reverse=True)
 ex, comp = scored(base)
 print(f"PERM decode baseline exact {ex:.3f} {json.dumps(comp)}", flush=True)
 for jv, k, perm in best_all[:3]:
     ex, comp = scored(permuted(base, k, perm))
-    print(f"PERM decode thing {k} {perm} judge {jv:.4f} exact {ex:.3f} {json.dumps(comp)}", flush=True)
+    print(
+        f"PERM decode thing {k} {perm} judge {jv:.4f} exact {ex:.3f} {json.dumps(comp)}", flush=True
+    )

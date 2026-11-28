@@ -8,7 +8,8 @@ decodes the score episodes four ways: the fit as saved; with the true-frame word
 true-frame summary model; and the true-frame model itself. Whichever swap restores hunger shows
 which half the fit gets wrong.
 
-    GRID_CFG=<config> uv run python scripts/diagnostics/hunger_halves.py <facts pair> <original pair> <checkpoint>
+    GRID_CFG=<config> uv run python scripts/diagnostics/hunger_halves.py <facts pair> <original \
+        pair> <checkpoint>
 """
 
 import copy
@@ -36,7 +37,9 @@ cfg, D, data, key, world = S["cfg"], S["D"], S["data"], S["key"], S["world"]
 raw_units = find_units(load_obs(original / "data"))
 saved = torch.load(ck, map_location="cuda", weights_only=False)
 m = saved["state"]["m"]
-print(f"HALVES {pair.name} from {ck.name} (iteration {saved['iteration']}), matching {m}", flush=True)
+print(
+    f"HALVES {pair.name} from {ck.name} (iteration {saved['iteration']}), matching {m}", flush=True
+)
 
 # The true-frame model, on frames redrawn from their facts as the facts pair's are.
 rng = np.random.default_rng(0)

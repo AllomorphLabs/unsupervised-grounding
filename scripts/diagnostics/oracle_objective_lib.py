@@ -1,5 +1,7 @@
 """Shared by oracle_objective.py and score_parts.py: data setup and the true-frame model."""
 
+from pathlib import Path
+
 import numpy as np
 import torch
 
@@ -18,7 +20,6 @@ from grounding.render.grid.frames import EpisodeRenderer, GridKey
 from grounding.runs.record import read_record
 from grounding.sim.world import state_from_array
 from grounding.sim.worlds import make_world
-from pathlib import Path
 
 R = Path("C:/Sites/allomorphlabs/unsupervised-grounding")
 
@@ -26,7 +27,9 @@ R = Path("C:/Sites/allomorphlabs/unsupervised-grounding")
 def setup(pair):
     import os
 
-    cfg = DecipherConfig.from_yaml(Path(os.environ.get("GRID_CFG", R / "configs/pilot-grid-decipher-split.yaml")))
+    cfg = DecipherConfig.from_yaml(
+        Path(os.environ.get("GRID_CFG", R / "configs/pilot-grid-decipher-split.yaml"))
+    )
     D = GridDecipherer(pair, cfg, "cuda")
     data = pair / "data"
     eps = sample(D.lang, read_record(data).seed, cfg)
@@ -35,8 +38,14 @@ def setup(pair):
     mu, sd = standardise(batches["fit"])
     standardise(batches["select"], mu, sd)
     standardise(batches["score"], mu, sd)
-    return {"cfg": cfg, "D": D, "data": data, "batches": batches,
-            "key": GridKey.from_dict(load_key(data)["grid"]), "world": make_world(**_world_spec(pair))}
+    return {
+        "cfg": cfg,
+        "D": D,
+        "data": data,
+        "batches": batches,
+        "key": GridKey.from_dict(load_key(data)["grid"]),
+        "world": make_world(**_world_spec(pair)),
+    }
 
 
 def oracle_fit(S, m):

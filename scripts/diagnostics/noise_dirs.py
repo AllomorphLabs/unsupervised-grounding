@@ -8,7 +8,8 @@ decodes the score episodes four ways: the fit as saved; with the true-frame word
 true-frame summary model; and the true-frame model itself. Whichever swap restores hunger shows
 which half the fit gets wrong.
 
-    GRID_CFG=<config> uv run python scripts/diagnostics/hunger_halves.py <facts pair> <original pair> <checkpoint>
+    GRID_CFG=<config> uv run python scripts/diagnostics/hunger_halves.py <facts pair> <original \
+        pair> <checkpoint>
 """
 
 import sys
@@ -33,7 +34,9 @@ cfg, D, data, key, world = S["cfg"], S["D"], S["data"], S["key"], S["world"]
 raw_units = find_units(load_obs(original / "data"))
 saved = torch.load(ck, map_location="cuda", weights_only=False)
 m = saved["state"]["m"]
-print(f"HALVES {pair.name} from {ck.name} (iteration {saved['iteration']}), matching {m}", flush=True)
+print(
+    f"HALVES {pair.name} from {ck.name} (iteration {saved['iteration']}), matching {m}", flush=True
+)
 
 # The true-frame model, on frames redrawn from their facts as the facts pair's are.
 rng = np.random.default_rng(0)
@@ -72,10 +75,18 @@ Q, _ = torch.linalg.qr(N.T)  # D x 64, orthonormal, in order
 for j, u in enumerate(D.units.units):
     if u[0] != "at":
         continue
-    w_true = o.Wb[j] - o.Wb[[k for k, v in enumerate(D.units.units) if v[0] == "at" and v[1] == u[1]]].mean(0)
-    w_fit = g.Wb[j] - g.Wb[[k for k, v in enumerate(D.units.units) if v[0] == "at" and v[1] == u[1]]].mean(0)
+    w_true = o.Wb[j] - o.Wb[
+        [k for k, v in enumerate(D.units.units) if v[0] == "at" and v[1] == u[1]]
+    ].mean(0)
+    w_fit = g.Wb[j] - g.Wb[
+        [k for k, v in enumerate(D.units.units) if v[0] == "at" and v[1] == u[1]]
+    ].mean(0)
     share = [float((Q[:, :k].T @ w_true).norm() ** 2 / w_true.norm() ** 2) for k in (4, 8, 16, 32)]
     cos = float(torch.nn.functional.cosine_similarity(w_true, w_fit, dim=0))
-    print(f"DIRS {str(u):18s} true size {float(w_true.norm()):.2f} fit size {float(w_fit.norm()):.2f} "
-          f"cos {cos:+.2f} share in top 4/8/16/32 noise directions "
-          + " ".join(f"{x:.2f}" for x in share), flush=True)
+    print(
+        f"DIRS {str(u):18s} true size {float(w_true.norm()):.2f} "
+        f"fit size {float(w_fit.norm()):.2f} "
+        f"cos {cos:+.2f} share in top 4/8/16/32 noise directions "
+        + " ".join(f"{x:.2f}" for x in share),
+        flush=True,
+    )

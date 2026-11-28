@@ -8,7 +8,8 @@ and is judged by the method's fit on the first fit batch with fixed draws. The c
 the same round with no move, so every candidate is compared fairly. The best candidate is kept if
 it beats that, and the next fact starts from it. Finally the result is decoded.
 
-    GRID_CFG=<config> uv run python scripts/diagnostics/em_moves.py <facts pair> <checkpoint> <thing>
+    GRID_CFG=<config> uv run python scripts/diagnostics/em_moves.py <facts pair> <checkpoint> \
+        <thing>
 """
 
 import copy
@@ -91,8 +92,11 @@ for n, j in enumerate(facts):
             if jv > best_j + 1e-4:
                 best_j, best_f, best_lab = jv, f, f"direction {d} sign {sign:+.0f}"
     cur = state_of(best_f)
-    print(f"EM fact {j} {D.units.units[j]}: kept {best_lab}, judge {best_j:.4f} "
-          f"({time.time() - t0:.0f}s)", flush=True)
+    print(
+        f"EM fact {j} {D.units.units[j]}: kept {best_lab}, judge {best_j:.4f} "
+        f"({time.time() - t0:.0f}s)",
+        flush=True,
+    )
 final = copy.copy(fit)
 final.__dict__ = dict(fit.__dict__)
 final.__dict__.update(cur)

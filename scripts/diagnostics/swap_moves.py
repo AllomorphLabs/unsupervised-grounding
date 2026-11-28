@@ -72,5 +72,7 @@ for label, swaps in cands:
     pred = np.stack([state_to_array(decode(world, x, key)) for x in frames])
     r = score_predictions(world, group, pred, lang_truth(data, positions))
     comp = {k: round(v, 3) for k, v in r["components"].items()}
-    print(f"SWAP {label:28s} judge {judge:.4f} exact {r['modulo_symmetry']:.3f} {json.dumps(comp)}",
-          flush=True)
+    print(
+        f"SWAP {label:28s} judge {judge:.4f} exact {r['modulo_symmetry']:.3f} {json.dumps(comp)}",
+        flush=True,
+    )

@@ -5,7 +5,8 @@ its particle-filter draws), and reports for each fit its own last fit value, its
 and, using hidden/ only to evaluate, its accuracy. Keeping each matching's best fit by its own fit
 value uses no truth, so it could become part of the method.
 
-    uv run python scripts/diagnostics/refit_restarts.py C:/.../runs/pilot-grid/pair-000 decipher-split \
+    uv run python scripts/diagnostics/refit_restarts.py C:/.../runs/pilot-grid/pair-000 \
+        decipher-split \
         C:/.../configs/pilot-grid-decipher-split.yaml 0,1 1,2
 """
 
@@ -81,7 +82,9 @@ for i in which:
         truth = lang_truth(data, positions)
         r = score_predictions(world, group, pred, truth)
         np.savez_compressed(
-            pair / "align" / name / f"restart-{cfg_path.stem}-{i}-{s}.npz", frames=frames, positions=positions
+            pair / "align" / name / f"restart-{cfg_path.stem}-{i}-{s}.npz",
+            frames=frames,
+            positions=positions,
         )
         # Exact frames up to the agent swap and each object near-symmetry (monitoring only).
         from grounding.sim.symmetry import Relabel

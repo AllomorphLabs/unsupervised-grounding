@@ -1,7 +1,8 @@
 """Check (uses hidden/ to score): decoding a saved fit with ``exact_objects`` (the method code in
 grounding.align.objects) reproduces the diagnostic scripts' result (object_smooth2.py).
 
-    GRID_CFG=<config> uv run python scripts/diagnostics/check_exact_objects.py <facts pair> <checkpoint>
+    GRID_CFG=<config> uv run python scripts/diagnostics/check_exact_objects.py <facts pair> \
+        <checkpoint>
 """
 
 import json
@@ -35,4 +36,6 @@ for on in (False, True):
     pred = np.stack([state_to_array(decode(world, x, key)) for x in frames])
     r = score_predictions(world, automorphisms(world), pred, lang_truth(data, positions))
     comp = {k: round(v, 3) for k, v in r["components"].items()}
-    print(f"CHECK exact_objects={on}: exact {r['modulo_symmetry']:.3f} {json.dumps(comp)}", flush=True)
+    print(
+        f"CHECK exact_objects={on}: exact {r['modulo_symmetry']:.3f} {json.dumps(comp)}", flush=True
+    )

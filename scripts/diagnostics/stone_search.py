@@ -6,7 +6,8 @@ true-frame model's rows for pair 2's stone lie, entry 105). A (1+1) evolution st
 adds a random change to the best rows so far, keeps it if the method's fit on the first fit batch
 (fixed draws) improves, and widens or narrows its steps by the one-fifth rule. The best is decoded.
 
-    GRID_CFG=<config> uv run python scripts/diagnostics/stone_search.py <facts pair> <checkpoint> <thing> [steps]
+    GRID_CFG=<config> uv run python scripts/diagnostics/stone_search.py <facts pair> \
+        <checkpoint> <thing> [steps]
 """
 
 import json
@@ -71,4 +72,6 @@ frames, positions = fit.decode(S["batches"]["score"])
 pred = np.stack([state_to_array(decode(world, x, key)) for x in frames])
 r = score_predictions(world, group, pred, lang_truth(data, positions))
 comp = {k: round(v, 3) for k, v in r["components"].items()}
-print(f"SEARCH end judge {best:.4f} exact {r['modulo_symmetry']:.3f} {json.dumps(comp)}", flush=True)
+print(
+    f"SEARCH end judge {best:.4f} exact {r['modulo_symmetry']:.3f} {json.dumps(comp)}", flush=True
+)
