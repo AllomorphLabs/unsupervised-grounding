@@ -87,9 +87,11 @@ trained).
   `recent_change`, on a facts copy). Exact object inference is now a method option
   (`exact_objects`, `exact_objects_from` in `grounding.align.objects`, entry 107), not yet in a
   frozen config. Decisions 29-30 are Decided and proposal edits 11-12 applied (Shane).
-- *Next:* (1) the glass (74% after in-fit training, 86-87% before) and agent B's hunger without
-  `edit_proposals`; (2) a stopping rule for in-fit training that needs no truth; (3) confirm a
-  frozen config on both tuning pairs, then once on fresh grid pair 3.
+- *Next:* (1) the glass (74% after in-fit training, 86-87% before); (2) put exact per-object inference into the fit and decode
+  as a method option, keep its world-model step on the learned frame model (not counted
+  transitions, which are a control); (3) the glass's fall and agent B's hunger; (4) confirm on
+  both tuning pairs, then once on fresh grid pair 3 with a frozen config. Proposal edit 11 (redrawn
+  frames) and a new edit for exact object inference await Shane's review.
 - **Checkpoints:** refits save what they have learned after every iteration (and before the split
   moves) and resume from any of them with changed settings (`FIT_RESUME`, `scripts/diagnostics/refit_restarts.py`, entry 98), so most tests
   take minutes, not hours.
@@ -2967,4 +2969,30 @@ step that sorts frame values and words into kinds, and the search that fixed the
 - *Moves:* the experiment scripts in `runs/queue/` (refits, diagnostics, the queue runner and
   watcher) are now in `scripts/diagnostics/` and `scripts/queue/` (`scripts/README.md`), and the
   tuning configs in `configs/tuning/`. Older entries name the old paths. `runs/` holds outputs only.
+
+**108. The glass's errors are its broken place, set by the summary model; inside exact object inference, a quarter weight on the summaries lifts pair 1 to 83% and pair 2 to 48%.**
+- *Training on exact histories* (`exact_objects_from`, 5 rounds from each pair's `recent_change`
+  fit, `configs/tuning/grid-facts-recent-exact.yaml`): pair 1 78.7% to 67.4%, pair 2 43.9% to 42.7%;
+  the stone rises (99%, 84%) and the glass falls (81%, 78%). Decoding with exact objects only stays
+  the better setting.
+- *Where the glass goes wrong* (pair 2): intact, held and broken are read right; every error is a
+  broken glass's place. The language tells a break in two sentences ("B drops the glass at the
+  river." "The glass breaks."), naming the place in the first. The learned world model rules out
+  a broken glass landing away from the dropper at all 300 real drops tested, by a median log
+  probability of 14.9 with one frame of context and 14.7 with the history
+  (`scripts/diagnostics/drop_world_model.py`). Yet the decode puts it where the dropper isn't
+  54-58% of the time, with the dropper's place right 97% of the time
+  (`scripts/diagnostics/dropper_check.py`): the summary model's density outvotes the world model.
+- *A lower summary weight inside exact object inference* (`exact_objects_kappa`, new, default the
+  filter's `summary_power` 0.5), decoding only, true matching:
+
+  | `exact_objects_kappa` | Pair 1 | Pair 2 |
+  |---|---|---|
+  | 0.5 (as before) | 78.4%, glass 90% | 43.7%, glass 87% |
+  | **0.25** | **83.0%**, glass 94%, stone 99.9% | **47.6%**, glass 92%, stone 78% |
+  | 0 | 43.5% | 12.2% |
+
+- *Meaning:* the summaries are needed, but at full weight their wrong rows for an object overrule
+  the words and the world model. 0.25 helps both pairs. Pair 2's remaining errors are agent B's
+  hunger (75%) and the stone (78%).
 
