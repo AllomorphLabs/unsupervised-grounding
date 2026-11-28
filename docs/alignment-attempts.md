@@ -20,9 +20,9 @@ taught us.
 
 ## Where we are now
 
-*(Updated as the work moves on. Last updated after experiment 98.)*
+*(Updated as the work moves on. Last updated after experiment 100.)*
 
-**Phase 3, grid video and state vectors with nothing hand-written (entries 56-98).**
+**Phase 3, grid video and state vectors with nothing hand-written (entries 56-100).**
 - Both observation formats find their structure from their own statistics, and the words'
   kinds come from the language alone; the search leaves the agents' order free.
 - **Hunger on grid video is solved under the true matching** (entries 69-76): split moves teach
@@ -62,9 +62,13 @@ taught us.
   12, but it decoded only 8%: the trap isn't a shortage of distinct guesses.
 - **Speed** (entry 91): the sampler graph and the cached context, both exact, are now on by
   default. The filter is about twice as fast.
-- **Next:** a starting point for the fit from exact inference over the frame stream's unit
-  views, with transitions counted from the frames, instead of a blank start. Grid pairs 2-4 stay
-  fresh for confirming the result. [TBD]
+- **Grid video redrawn from its facts** (entries 99-100). Each frame is redrawn from the facts
+  its own parser finds, so a world state has one drawing, and the world model and the filter work
+  on that. From a blank start, under the true matching on pair 1, this decodes 44.3% exact, and
+  50.1% once the split moves also retry every appearance: both agents' hunger at 97%, against
+  4.9-25.3% for every blank start on the original frames. Proposal edit 11 is drafted for review.
+- **Running:** the frozen search (`configs/pilot-grid-facts-decipher.yaml`) on fresh grid pair
+  2's facts copy, about 9-10 hours. Grid pairs 3-4 stay fresh. [TBD]
 - **Checkpoints:** fits can now save what they have learned after every iteration and resume
   from any of them with changed settings (entry 98), so a test no longer has to start again.
 
@@ -2628,3 +2632,84 @@ step that sorts frame values and words into kinds, and the search that fixed the
     weights) after every iteration, and just before the split moves, and can resume from any of
     them with changed settings. Resuming reproduced a continuous fit exactly in a small CPU
     check. The particles are redrawn every iteration, so nothing else is needed.
+
+**99. Grid video redrawn from the facts found in each frame, so each world state has one drawing.**
+- *Why:* every blank-start grid fit so far is trapped (entries 94-98), while the state-vector
+  method, with nothing hand-written, decodes 63-68% exact (entries 86-87). The grid aligner already
+  reads each frame as the facts its own parser finds (places, things, appearances, carrying, a
+  thing gone); the summary model, the split moves and the decoding all use them. Only the world
+  model and the particle filter work on whole drawings, and a drawing also says which cell of its
+  patch each thing was put in, which the renderer picks at random. So the filter's guesses are
+  spread over drawings of one state rather than over states.
+- *How:* chosen with Shane as the night's approach (option 1).
+  - `units.canonical_frames`: each frame is redrawn from its facts alone. Each thing goes in a
+    fixed cell of its place (the k-th cell in reading order for the k-th thing found), in the
+    channel it was drawn in, and things that shared a cell (a carried object) share the first
+    one's cell. It uses only the frame stream and its parse.
+  - `runs/queue/make_facts_pair.py` makes a pair's facts copy and checks it before writing: the
+    redrawn stream parses into the same places and facts (the parser numbers the things in
+    another order, [0, 2, 3, 4, 1] for pair 1, and the saved matchings are translated), and every
+    frame's facts are unchanged, all 2,053,172 frames. In pair 1's first 200,000 frames, distinct
+    frames fall from 144,031 to 20,832.
+  - The fixed cell of each thing follows from its colour, which is random per pair, so the agent
+    symmetry survives the redrawing.
+  - A world model is trained on the redrawn stream with the usual settings, then the usual fit
+    (32 particles, split moves at iteration 12) runs under the true matching on pair 1. If it
+    decodes about 50% exact or better, the settings are frozen and one full search runs on fresh
+    grid pair 2.
+  - Proposal edit 11 is drafted for review: it would say that for grid video the world model
+    predicts frames redrawn from their facts. Not applied.
+- *Result:* the world model on the redrawn frames reaches a validation loss of 0.0082, against
+  0.0157 on the original frames. Under the true matching, from a blank start (seed 1):
+
+  | Pair 1, true matching | Iteration 12 | Iteration 16 | Exact | A hungry | B hungry | Glass | Stone | Apple |
+  |---|---|---|---|---|---|---|---|---|
+  | **Redrawn frames** | 52.25 | **52.90** | **44.3%** | 97% | 73% | 93% | 80% | 89% |
+  | Original frames, best blank start (entry 96) | 52.07 | 52.37 | 25.3% | 73% | 97% | 83% | 80% | 58% |
+  | Original frames, 128 particles (entry 98) | 52.55 | 51.46 | 8.0% | 73% | 93% | 46% | 64% | 42% |
+  | Original frames, started from the truth (entry 96) | 52.95 | 52.91 | 53.6% | | | | | |
+
+  - The best blank-start grid result so far, with a final fit level with the start from the
+    truth. Object locations rise to 80-93%, and object swaps stay small (4-7%).
+  - Just below the agreed bar of 45%, so the gate (`runs/queue/facts_gate.py`) did not queue the
+    pair 2 search.
+  - One agent's hunger is still wrong, as in every blank start: agent B is decoded hungry 50% of
+    the time when it isn't (agent A 0.6%), and hungry when it is 88% of the time (A 96%). The fit
+    keeps B hungry after B has eaten.
+- *Meaning:*
+  - Taking the drawing out of the world model and the filter removes most of the trap: the
+    objects, which no change to the search had fixed (entries 94-98), are now read well.
+  - What is left is one agent's hunger. The split moves did place one of B's appearances (fact
+    25), but not the change back after eating.
+  - Follow-ups, entry 100.
+
+**100. On the redrawn frames, retrying every appearance in the split moves fixes the stuck hunger: 50% exact on pair 1, and the frozen search goes to fresh pair 2.**
+- *Why:* in entry 99 one agent's hunger was stuck (B decoded hungry half the time it wasn't),
+  and the split moves had tried only the 4 facts of smallest effect, of which one was B's.
+- *How:* each test resumes pair 1's entry-99 fit from its checkpoint just before the split moves
+  (entry 98), so only the split moves and the 4 iterations after them are redone, with one setting
+  changed. First test: `split_looks` (entry 92), which also retries every appearance fact (9 facts
+  in all). Queued after it: 6 weakest facts instead of 4, and a second seed from scratch.
+- *Result:*
+
+  | Pair 1, redrawn frames, true matching | Split likelihood | Fit | Select | Exact | A place | A hungry | B hungry | Glass | Stone | Apple |
+  |---|---|---|---|---|---|---|---|---|---|---|
+  | 4 weakest facts (entry 99) | 112.86 | 52.90 | 52.97 | 44.3% | 96% | 97% | 73% | 93% | 80% | 89% |
+  | **Also every appearance** | **114.54** | 52.80 | 52.60 | **50.1%** | 80% | 97% | **97%** | 86% | 82% | 90% |
+
+  - Both agents' hunger is now read at 97%. Agent A's place falls from 96% to 80%.
+  - The method's own selection score is a little lower for the better fit (52.60 against 52.97).
+    Selection compares matchings under one setting, so this doesn't affect the search, but a
+    choice between settings by that score would have picked the worse one.
+  - The split moves take about 75 minutes instead of 18, as they try 9 facts in 3 orders.
+- *Meaning and next step:*
+  - The agreed bar for going to a fresh pair was about 50% exact (with Shane, 27 November). It is
+    met, so the setting is frozen as `configs/pilot-grid-facts-decipher.yaml` (the grid search's
+    config plus `split_looks`), with the redrawing of entry 99, and one full search runs on fresh
+    grid pair 2's facts copy, followed by its scoring. The 6-weakest and second-seed tests on pair
+    1 run after it.
+  - Pair 2's search runs the slower split moves for each of its 6 finalists, so it takes about
+    9-10 hours instead of 4. [TBD]
+  - The gate of entry 99 recorded a fail at 44.3% (`runs/queue/FACTS-GATE-FAILED`); this entry's
+    test supersedes it.
+

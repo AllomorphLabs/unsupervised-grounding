@@ -144,3 +144,34 @@ log, entry 84) is the pilot world with one added rule, and was used for tuning a
 **Proposed:** where the proposal describes the main worlds, say that they are new worlds (other
 places, objects or rules), not variants of the pilot world, and that results in pilot-derived
 worlds are reported as method development, not as evidence for the hypotheses.
+
+## 11. Grid video's world model predicts the facts found in each frame, not the drawing
+
+**Status:** proposed, not applied. It depends on the result of the experiment log's entry 99 and
+on Shane's decision whether it replaces the current grid method or runs alongside it.
+
+**Evidence:** entries 89-98. The grid aligner already reads every frame as the facts it finds
+from the frame stream alone (places, things, appearances, carrying, a thing gone): the summary
+model, the split moves and the decoding all use them. Only the world model and the particle
+filter work on whole drawings, and a drawing also says which cell of its patch each thing landed
+in, which the renderer picks at random. One world state has about seven drawings in pair 1's
+frames. Started from the truth, the method's fit is best by its own score and decodes 54% exact
+(entry 96); from a blank start, every change to the search tried so far stays trapped.
+
+**Change:** before the world model is trained, each frame is redrawn from its facts alone: each
+thing in a fixed cell of its place, in the colour it was drawn in, a carried object in its
+carrier's cell (units.canonical_frames). The redrawn stream has the same facts as the original,
+checked frame by frame, and one drawing per set of facts. The world model is trained on it and the
+search runs on it unchanged. Nothing comes from the language stream, the truth or a pairing.
+
+**What it changes in the proposal:**
+- Step 4 says the world model "predicts the next frame". It would say that for grid video it
+  predicts the next frame as redrawn from the facts found in it, and why.
+- *Experimenter-supplied grounding* says grid video reduces it relative to state vectors and
+  that the gap between the formats is informative. Grid video would then rest more openly on the
+  general procedure that finds a frame's facts (a grid of cells with channels; a thing drawn as
+  one lit value; places as separate patches). The gap between the formats would mostly measure
+  what that procedure must discover, and the threat should say so.
+- The renderer checks are unaffected: the fixed cell of each thing follows from its colour,
+  which is assigned at random per pair, so the redrawing keeps the agent symmetry.
+
