@@ -10,7 +10,7 @@ from grounding.analysis.labels import load_key
 from grounding.analysis.score import _world_spec, lang_truth
 from grounding.data.load import load_lang
 from grounding.render.grid.frames import GridKey, decode
-from grounding.sim.world import AT, HELD, state_from_array
+from grounding.sim.world import AT, BROKEN, HELD, state_from_array
 from grounding.sim.worlds import make_world
 
 pair, f, obj = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
@@ -27,7 +27,7 @@ o = world.objects.index(obj)
 
 def kind(p, t, place):
     k, i = p.loc[o]
-    if k == AT:
+    if k in (AT, BROKEN):
         return "at the right place" if i == place else "at a wrong place"
     if k == HELD:
         return (
@@ -44,7 +44,7 @@ for t in range(1, len(truth)):
     if ep[t] != ep[t - 1]:
         continue
     a, b = truth[t - 1].loc[o], truth[t].loc[o]
-    if a[0] == HELD and b[0] == AT:
+    if a[0] == HELD and b[0] in (AT, BROKEN):
         n += 1
         for d in c:
             u = t + d
@@ -62,7 +62,7 @@ for t in range(1, len(truth)):
     if ep[t] != ep[t - 1]:
         continue
     a, b = truth[t - 1].loc[o], truth[t].loc[o]
-    if a[0] == HELD and b[0] == AT:
+    if a[0] == HELD and b[0] in (AT, BROKEN):
         k, i = pred[t - 1].loc[o]
         before["held before the drop" if k == HELD else "decoded lying before the drop"] += 1
 print("  just before the drop: " + ", ".join(f"{k} {v / n:.2f}" for k, v in before.most_common()))

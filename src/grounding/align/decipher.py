@@ -95,6 +95,9 @@ class DecipherConfig:
     # paths instead of the particles' sampled ones (entry 106). Grid video only.
     exact_objects: bool = False
     exact_objects_from: int = 0
+    # The summaries' weight inside exact object inference; below 0, the filter's summary_power.
+    # The summary model can hold wrong rows for an object and outvote the world model (entry 108).
+    exact_objects_kappa: float = -1.0
     iterations: int = 12
     own_prior: float = 20.0  # pseudo-counts on each value's own entity words, to start
     # Pseudo-counts tying each other word to the changes that happen about as often as it is said,

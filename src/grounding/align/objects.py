@@ -86,6 +86,8 @@ def smooth(fit, b, F: torch.Tensor, k: int) -> torch.Tensor:
         ok = torch.ones(Be * Tm * S, dtype=torch.bool, device=dev)
     logok = torch.where(ok, 0.0, -1e9).reshape(Be, Tm, S)
     kappa = getattr(fit, "kappa_now", cfg.summary_power)
+    if cfg.exact_objects_kappa >= 0:
+        kappa = cfg.exact_objects_kappa
     focus = (fit.sig / fit.sig.sum()).tolist() if hasattr(fit, "sig") else None
     q = float(D.q)
     log_q, log_move = math.log(q), math.log(max(1 - q, 1e-12))
