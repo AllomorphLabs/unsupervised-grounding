@@ -66,7 +66,7 @@ trained).
 | **Frames redrawn from their facts** (`units.canonical_frames`, `runs/queue/make_facts_pair.py`) | 44.3% | 11.8% | 99, 101 |
 | **+ narration fix** (`recent_change`) | 71.0-72.6% | 30.6% | 103 |
 | **+ exact inference per object at decoding** (`runs/queue/object_smooth2.py`) | **78.7%** | **43.9%** | 106 |
-| + `edit_proposals`, then 3 rounds training on exact object histories (`smoothed_em.py`) | not run | **47.7%** (8 rounds running) | 106 |
+| + `edit_proposals`, then rounds training on exact object histories (`smoothed_em.py`) | not run | **47.7%** (3 rounds), **about 51%** (5-8 rounds) | 106 |
 | Ceiling: model fitted to the true frames | about 89% | 79-87% | 101, 104 |
 
 - *What works and why:* (1) redrawing removes the random cell within a patch, so one world state
@@ -87,7 +87,7 @@ trained).
   `recent_change`, on a facts copy). It does not yet include exact object inference, which exists
   only in `runs/queue/` scripts and must move into `src/grounding/align/` (with tests) before any
   confirmation search.
-- *Next:* (1) finish the 8-round run; (2) put exact per-object inference into the fit and decode
+- *Next:* (1) the glass (74% after in-fit training, 86-87% before); (2) put exact per-object inference into the fit and decode
   as a method option, keep its world-model step on the learned frame model (not counted
   transitions, which are a control); (3) the glass's fall and agent B's hunger; (4) confirm on
   both tuning pairs, then once on fresh grid pair 3 with a frozen config. Proposal edit 11 (redrawn
@@ -2945,5 +2945,9 @@ step that sorts frame values and words into kinds, and the search that fixed the
     without exact objects, 28.6% to 42.9%.
 - *Meaning:* the stone's error came from the filter, not the model: given the same model, exact
   inference reads it far better, and training on its histories improves the model itself. The
-  glass falling as the stone rises is the next problem. 8 rounds are running. [TBD]
+  glass falling as the stone rises is the next problem.
+- *8 rounds* (from the `edit_proposals` fit): with exact objects 42.5%, 45.1%, 47.7%, 49.6%,
+  **51.5%**, 50.7%, 51.1%, 50.9%; as decoded 32.4% to 47.9%. It levels off at about 51% from round
+  5: stone 80%, both agents' hunger 97%, apple 99.9%, glass 74% (86% at the start). The method's fit
+  drifts down (53.34 to about 52.0-52.3), so choosing how many rounds by that fit would stop early.
 
